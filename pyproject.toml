@@ -50,4 +50,5 @@ source = ["cv_agent"]
 omit = [
     "src/cv_agent/cli.py",
     "src/cv_agent/llm/client.py",
+    "src/cv_agent/ocr/marker_engine.py",
 ]
