@@ -1,0 +1,34 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Environment
+.env
+
+# Local data & outputs (keep folder structure via .gitkeep)
+data/cvs/*
+data/jds/*
+data/reports/*
+!data/**/.gitkeep
+evals/*
+!evals/.gitkeep
+
+# SQLite store
+*.sqlite
+*.sqlite-*
+
+# Marker / HuggingFace model caches (should live in user cache, never committed)
+*.safetensors
+*.gguf
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
