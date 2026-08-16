@@ -6,8 +6,8 @@ server (OpenAI/Anthropic-compatible, with continuous batching that helps when th
 several requests). You can equally point `cv-agent` at `mlx-lm`, Ollama, or a cloud provider —
 nothing below is required, it's just one convenient option.
 
-> ⚠️ vMLX is a fast-moving niche project. Commands below reflect its docs at the time of writing —
-> if something differs, trust `vmlx --help` and the official repo/README over this file.
+> Commands below reflect vMLX's official docs at the time of writing. If anything differs, trust
+> `vmlx --help` and the [official repo](https://github.com/jjang-ai/vmlx).
 
 ## 1. Install
 

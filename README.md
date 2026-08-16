@@ -80,7 +80,7 @@ omit it to accept all defaults / auto-detection. There are **no required fields*
 exists to *override* defaults.
 
 | Field | Type | Default | Meaning |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `title` | string | JD filename | Display name only |
 | `role_archetype` | `technical` \| `management` \| `hybrid` | auto-detected from JD | Steers interview depth vs breadth |
 | `interview_format` | `technical` \| `behavioral` \| `mixed` | `mixed` | Question mix |
@@ -108,7 +108,7 @@ uv run cv-agent list-jds          # list selectable JDs from the JD source
 Precedence for any overlapping setting: **CLI > JD meta > `.env` > built-in default.**
 
 | Option | Effect |
-|---|---|
+| --- | --- |
 | `--jd FILE` | Which JD to screen against (else `DEFAULT_JD`, else interactive pick) |
 | `--role`, `--format`, `--minutes`, `--lang` | Override the JD meta fields |
 | `--strict` / `--loose` | Override screening strictness |

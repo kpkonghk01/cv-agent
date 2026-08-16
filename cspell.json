@@ -22,6 +22,7 @@
     "Pydantic",
     "pytest",
     "Qwen",
+    "trimmable",
     "unquantized",
     "venv",
     "vmlx"
