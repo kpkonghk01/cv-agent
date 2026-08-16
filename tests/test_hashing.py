@@ -40,6 +40,15 @@ def test_interview_meta_hash_changes_with_values():
     assert base != interview_meta_hash({"minutes": 30})
 
 
+def test_type_guards_reject_wrong_inputs():
+    with pytest.raises(TypeError):
+        cv_hash("not-bytes")  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        jd_hash(b"not-str")  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        interview_meta_hash([("minutes", 45)])  # type: ignore[arg-type]
+
+
 def test_hashes_have_short_helpers_for_filenames():
     from cv_agent.hashing import short
 
