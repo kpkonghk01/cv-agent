@@ -137,7 +137,7 @@ run.
 
 ### Directory structure
 
-```
+```text
 cv-agent/
 ├── README.md  AGENT.md  CLAUDE.md  CONTEXT.md   # docs + glossary
 ├── docs/adr/                                     # architecture decision records (0001–0004)

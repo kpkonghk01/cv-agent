@@ -1,0 +1,35 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "BYOK",
+    "checkpointer",
+    "cvs",
+    "Dedup",
+    "dedup",
+    "evals",
+    "gitkeep",
+    "hardcode",
+    "huggingface",
+    "JANG",
+    "JANGQ",
+    "langgraph",
+    "mlx",
+    "multimodal",
+    "Ollama",
+    "pipx",
+    "pyproject",
+    "Pydantic",
+    "pytest",
+    "Qwen",
+    "unquantized",
+    "venv",
+    "vmlx"
+  ],
+  "flagWords": [],
+  "ignorePaths": [
+    ".venv/**",
+    "data/**",
+    "**/*.sqlite"
+  ]
+}
