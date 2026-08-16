@@ -40,3 +40,8 @@ class ProcessedRegistry(Protocol):
     def get_record(self, cv_hash: str, jd_hash: str) -> ProcessedRecord | None: ...
 
     def mark_processed(self, record: ProcessedRecord) -> None: ...
+
+
+@runtime_checkable
+class Store(ProfileCache, RubricCache, ProcessedRegistry, Protocol):
+    """A backend that provides all three caches (the SQLite store does)."""
