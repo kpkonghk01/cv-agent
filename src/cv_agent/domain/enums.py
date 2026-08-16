@@ -28,6 +28,13 @@ class ScoreLevel(str, Enum):
     UNMET = "unmet"
 
 
+class Strictness(str, Enum):
+    """How a must-have Requirement that is only ``Partial`` is treated."""
+
+    LOOSE = "loose"   # a Partial must-have passes (default)
+    STRICT = "strict"  # a must-have must be Met to pass
+
+
 class Verdict(str, Enum):
     """Outcome of screening one Candidate against one JD."""
 

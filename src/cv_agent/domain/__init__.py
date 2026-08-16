@@ -16,6 +16,7 @@ from cv_agent.domain.enums import (
     RequirementKind,
     RoleArchetype,
     ScoreLevel,
+    Strictness,
     Verdict,
 )
 from cv_agent.domain.rubric import Requirement, Rubric
@@ -33,6 +34,7 @@ __all__ = [
     "RequirementKind",
     "RoleArchetype",
     "ScoreLevel",
+    "Strictness",
     "Verdict",
     "Requirement",
     "Rubric",
