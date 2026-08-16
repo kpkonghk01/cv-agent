@@ -45,5 +45,9 @@ markers = [
 
 [tool.coverage.run]
 source = ["cv_agent"]
-# LLM semantics are checked by offline evals, not unit tests (see AGENT.md testing section)
-omit = ["src/cv_agent/cli.py"]
+# Real-IO adapters are checked by offline evals / real runs, not unit tests
+# (see AGENT.md testing section).
+omit = [
+    "src/cv_agent/cli.py",
+    "src/cv_agent/llm/client.py",
+]
