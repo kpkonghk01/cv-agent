@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from cv_agent.graph.candidate_graph import CandidateState, build_candidate_graph
 from cv_agent.graph.context import PipelineDeps, RunContext, uniform_clients
-from cv_agent.graph.reports import RejectReportMode, render_reject_report
+from cv_agent.graph.reports import RejectReportMode, render_reject_report, render_scorecard
 
 __all__ = [
     "build_candidate_graph",
@@ -14,4 +14,5 @@ __all__ = [
     "uniform_clients",
     "RejectReportMode",
     "render_reject_report",
+    "render_scorecard",
 ]

@@ -19,6 +19,29 @@ class RejectReportMode(str, Enum):
     NONE = "none"       # suppress the file entirely
 
 
+def render_scorecard(report: ScreeningReport, rubric: Rubric | None) -> str:
+    """A bullet list of every Requirement: text, must/nice, level, and evidence.
+
+    Deterministic (not LLM-generated). Shared by the Reject Report and the Interview
+    Brief so both read on their own, not as opaque r-ids. Falls back to the id when no
+    rubric is supplied.
+    """
+    by_id = {r.id: r for r in (rubric.requirements if rubric else ())}
+    lines = []
+    for s in report.scores:
+        req = by_id.get(s.requirement_id)
+        if req is not None:
+            kind = "must-have" if req.is_must_have else "nice-to-have"
+            label = f"{req.text} `[{kind}]`"
+        else:
+            label = f"`{s.requirement_id}`"
+        line = f"- {label}: **{s.level.value}**"
+        if s.evidence:
+            line += f" — {s.evidence}"
+        lines.append(line)
+    return "\n".join(lines) or "- (no scores recorded)"
+
+
 def render_reject_report(
     report: ScreeningReport,
     profile: CandidateProfile,
@@ -26,11 +49,7 @@ def render_reject_report(
     *,
     rubric: Rubric | None = None,
 ) -> str | None:
-    """Markdown for a rejected candidate, or None when suppressed.
-
-    When the rubric is supplied, each score line shows the requirement's *text* and
-    whether it is a must-have — so the report reads on its own, not as opaque r-ids.
-    """
+    """Markdown for a rejected candidate, or None when suppressed."""
     if mode is RejectReportMode.NONE:
         return None
 
@@ -39,19 +58,6 @@ def render_reject_report(
     body = [f"# Reject Report — {who}", "", "**Verdict:** reject", "", "## Reasons", reasons]
 
     if mode is RejectReportMode.FULL:
-        by_id = {r.id: r for r in (rubric.requirements if rubric else ())}
-        lines = []
-        for s in report.scores:
-            req = by_id.get(s.requirement_id)
-            if req is not None:
-                kind = "must-have" if req.is_must_have else "nice-to-have"
-                label = f"{req.text} `[{kind}]`"
-            else:
-                label = f"`{s.requirement_id}`"
-            line = f"- {label}: **{s.level.value}**"
-            if s.evidence:
-                line += f" — {s.evidence}"
-            lines.append(line)
-        body += ["", "## Requirement scores", "\n".join(lines) or "- (no scores recorded)"]
+        body += ["", "## Requirement scores", render_scorecard(report, rubric)]
 
     return "\n".join(body) + "\n"

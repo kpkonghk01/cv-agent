@@ -19,7 +19,7 @@ from cv_agent.domain.candidate import CandidateProfile
 from cv_agent.domain.enums import CandidateStatus, Verdict
 from cv_agent.domain.screening import ScreeningReport
 from cv_agent.graph.context import PipelineDeps, RunContext
-from cv_agent.graph.reports import render_reject_report
+from cv_agent.graph.reports import render_reject_report, render_scorecard
 from cv_agent.hashing import cv_hash, short
 from cv_agent.naming import candidate_id, interview_brief_filename, reject_report_filename
 from cv_agent.nodes import interview_brief, screen, structure_cv
@@ -99,9 +99,14 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
             output_language=ctx.output_language,
             prev_scorecard=ctx.prev_scorecard,
         )
+        scorecard = (
+            "## 篩選評分卡（Screening scorecard）\n\n"
+            + render_scorecard(report, ctx.rubric)
+        )
+        document = f"{scorecard}\n\n---\n\n{brief}"
         cid = candidate_id(profile.name, state["cv_hash"])
         filename = interview_brief_filename(cid, ctx.jd_slug, short(ctx.interview_meta_hash))
-        path = deps.sink.write(filename, brief)
+        path = deps.sink.write(filename, document)
         return _outcome(Verdict.PASS, path, profile.name, report.reasons)
 
     def reject(state: CandidateState) -> dict:

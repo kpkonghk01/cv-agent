@@ -116,7 +116,9 @@ def test_pass_writes_brief_and_records_processed(store, tmp_path):
     state = _run(deps, _ctx())
     assert state["verdict"] == "pass"
     assert Path(state["report_path"]).name.startswith("pass__")
-    assert Path(state["report_path"]).read_text(encoding="utf-8") == BRIEF
+    content = Path(state["report_path"]).read_text(encoding="utf-8")
+    assert BRIEF in content
+    assert "篩選評分卡" in content  # deterministic scorecard prepended to the brief
     assert store.is_processed(CVH, "jd1") is True
     assert store.get_record(CVH, "jd1").verdict is Verdict.PASS
     assert deps.ocr.calls == 1
@@ -158,7 +160,9 @@ def test_force_pass_routes_a_reject_to_the_interview_node(store, tmp_path):
     state = _run(deps, _ctx(force_pass=True))
     assert state["verdict"] == "pass"
     assert Path(state["report_path"]).name.startswith("pass__")
-    assert Path(state["report_path"]).read_text(encoding="utf-8") == BRIEF
+    content = Path(state["report_path"]).read_text(encoding="utf-8")
+    assert BRIEF in content
+    assert "篩選評分卡" in content  # deterministic scorecard prepended to the brief
     assert store.get_record(CVH, "jd1").verdict is Verdict.PASS
 
 
