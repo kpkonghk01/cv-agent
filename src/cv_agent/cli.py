@@ -84,7 +84,15 @@ def _resolve_jd(cli_jd: str | None, default_jd: str | None, jd_source) -> str:
 def _build_clients(config: AppConfig) -> dict:
     from cv_agent.llm import OpenAICompatibleClient
 
-    return {node: OpenAICompatibleClient(config.llm[node]) for node in NodeName}
+    raw_max = os.environ.get("LLM_MAX_TOKENS")
+    max_tokens = int(raw_max) if raw_max else None
+    disable_thinking = os.environ.get("LLM_DISABLE_THINKING", "").lower() in ("1", "true", "yes")
+    return {
+        node: OpenAICompatibleClient(
+            config.llm[node], max_tokens=max_tokens, disable_thinking=disable_thinking
+        )
+        for node in NodeName
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -14,17 +14,36 @@ from cv_agent.llm.structured import Message
 
 
 class OpenAICompatibleClient:
-    def __init__(self, config: LLMConfig, *, temperature: float = 0.2) -> None:
+    def __init__(
+        self,
+        config: LLMConfig,
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        disable_thinking: bool = False,
+    ) -> None:
         from openai import OpenAI  # lazy: keeps openai optional for tests
 
         self._client = OpenAI(base_url=config.base_url, api_key=config.api_key)
         self._model = config.model
         self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._disable_thinking = disable_thinking
 
     def complete(self, messages: Sequence[Message]) -> str:
-        resp = self._client.chat.completions.create(
-            model=self._model,
-            messages=list(messages),
-            temperature=self._temperature,
+        kwargs: dict = {
+            "model": self._model,
+            "messages": list(messages),
+            "temperature": self._temperature,
+        }
+        if self._max_tokens is not None:
+            kwargs["max_tokens"] = self._max_tokens
+        # Reasoning models (e.g. Qwen3) otherwise burn the whole budget "thinking".
+        # Ask the chat template to skip it; harmless for models that don't support it.
+        extra_body = (
+            {"chat_template_kwargs": {"enable_thinking": False}}
+            if self._disable_thinking
+            else None
         )
+        resp = self._client.chat.completions.create(**kwargs, extra_body=extra_body)
         return resp.choices[0].message.content or ""
