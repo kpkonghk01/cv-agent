@@ -131,6 +131,24 @@ The raw internal **Screening Report** stays in SQLite and is never written to th
 (pass/reject counts, reject reasons, and any errors / manual-review flags) prints at the end of each
 run.
 
+### Re-analysing a CV (clearing cached results)
+
+The store dedups by `(cv_hash, jd_hash)` and caches the OCR'd profile by `cv_hash` (see
+[ADR 0003](./docs/adr/0003-three-layer-cache-dedup.md)), so an already-processed CV is **skipped**
+on re-run. To force a fresh analysis — e.g. after switching models, editing the JD, or changing
+strictness — clear that CV's cached results:
+
+```bash
+# Full reset: drop the OCR/profile cache AND every judgment for this CV
+uv run python scripts/forget_cv.py "<cv-file>"
+
+# Re-judge only: keep the (expensive) OCR/profile cache, clear just the verdict for one JD
+uv run python scripts/forget_cv.py "<cv-file>" --jd "<jd-file>"
+```
+
+`<cv-file>` / `<jd-file>` accept a bare filename (resolved against `CV_SOURCE_DIR` / `JD_SOURCE_DIR`)
+or a full path. To wipe everything for every CV, just delete the store: `rm "$STORE_PATH"`.
+
 ---
 
 ## Development

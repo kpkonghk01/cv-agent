@@ -115,6 +115,32 @@ def test_mark_processed_replaces_prior_verdict(store):
 # --- Persistence & lifecycle ---------------------------------------------
 
 
+def test_forget_profile_removes_only_that_cv(store):
+    store.put_profile("cv1", _profile())
+    store.put_profile("cv2", _profile())
+    assert store.forget_profile("cv1") == 1
+    assert store.get_profile("cv1") is None
+    assert store.get_profile("cv2") is not None
+    assert store.forget_profile("cv1") == 0  # already gone
+
+
+def test_forget_processed_scoped_to_one_jd(store):
+    store.mark_processed(_record(cv="cv1", jd="jd1"))
+    store.mark_processed(_record(cv="cv1", jd="jd2"))
+    assert store.forget_processed("cv1", "jd1") == 1
+    assert store.is_processed("cv1", "jd1") is False
+    assert store.is_processed("cv1", "jd2") is True  # other JD kept
+
+
+def test_forget_processed_all_jds_for_a_cv(store):
+    store.mark_processed(_record(cv="cv1", jd="jd1"))
+    store.mark_processed(_record(cv="cv1", jd="jd2"))
+    store.mark_processed(_record(cv="cv2", jd="jd1"))
+    assert store.forget_processed("cv1") == 2
+    assert store.is_processed("cv1", "jd1") is False
+    assert store.is_processed("cv2", "jd1") is True  # other CV kept
+
+
 def test_data_persists_across_instances(tmp_path):
     db = str(tmp_path / "s.sqlite")
     with SqliteStore(db) as s:

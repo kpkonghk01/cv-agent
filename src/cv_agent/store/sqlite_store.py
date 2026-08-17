@@ -80,7 +80,26 @@ class SqliteStore:
             (record.cv_hash, record.jd_hash, record.model_dump_json()),
         )
 
+    # --- Forget (maintenance: force re-analysis of a CV) ------------------
+
+    def forget_profile(self, cv_hash: str) -> int:
+        """Drop the cached Candidate Profile for a CV. Returns rows removed."""
+        return self._delete("DELETE FROM profiles WHERE cv_hash = ?", (cv_hash,))
+
+    def forget_processed(self, cv_hash: str, jd_hash: str | None = None) -> int:
+        """Drop screening judgments for a CV — all JDs, or one when jd_hash is given."""
+        if jd_hash is None:
+            return self._delete("DELETE FROM processed WHERE cv_hash = ?", (cv_hash,))
+        return self._delete(
+            "DELETE FROM processed WHERE cv_hash = ? AND jd_hash = ?", (cv_hash, jd_hash)
+        )
+
     # --- Internals & lifecycle -------------------------------------------
+
+    def _delete(self, sql: str, params: tuple[object, ...]) -> int:
+        cur = self._conn.execute(sql, params)
+        self._conn.commit()
+        return cur.rowcount
 
     def _fetch(self, sql: str, params: tuple[object, ...]) -> str | None:
         cur = self._conn.execute(sql, params)
