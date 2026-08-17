@@ -182,4 +182,5 @@ uv run pytest -m "not slow"   # skip the Marker OCR integration smoke test
 
 - **[CONTEXT.md](./CONTEXT.md)** — domain glossary (ubiquitous language).
 - **[AGENT.md](./AGENT.md)** — decision rules, config precedence, robustness, deferred seams.
-- **[docs/adr/](./docs/adr/)** — why the structural choices were made.
+- **[docs/technical-decisions.md](./docs/technical-decisions.md)** — 白話技術決策簡介（為什麼 Marker / BYOK / SQLite / ports…）。
+- **[docs/adr/](./docs/adr/)** — why the structural choices were made (terse ADRs).
