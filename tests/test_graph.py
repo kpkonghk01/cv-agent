@@ -73,7 +73,7 @@ def _rubric():
     )
 
 
-def _ctx(reject_mode=RejectReportMode.FULL):
+def _ctx(reject_mode=RejectReportMode.FULL, force_pass=False):
     return RunContext(
         rubric=_rubric(),
         jd_hash="jd1",
@@ -85,6 +85,7 @@ def _ctx(reject_mode=RejectReportMode.FULL):
         reject_mode=reject_mode,
         interview_meta_hash="a" * 64,
         created_at="2026-08-17T00:00:00Z",
+        force_pass=force_pass,
     )
 
 
@@ -150,6 +151,15 @@ def test_already_processed_is_skipped(store, tmp_path):
     assert deps.ocr.calls == 0
     assert deps.clients[NodeName.SCREEN].calls == 0
     assert list(Path(tmp_path).glob("*.md")) == []
+
+
+def test_force_pass_routes_a_reject_to_the_interview_node(store, tmp_path):
+    deps = _deps(store, tmp_path, REJECT_SHEET)
+    state = _run(deps, _ctx(force_pass=True))
+    assert state["verdict"] == "pass"
+    assert Path(state["report_path"]).name.startswith("pass__")
+    assert Path(state["report_path"]).read_text(encoding="utf-8") == BRIEF
+    assert store.get_record(CVH, "jd1").verdict is Verdict.PASS
 
 
 def test_cached_profile_skips_ocr_and_structure(store, tmp_path):

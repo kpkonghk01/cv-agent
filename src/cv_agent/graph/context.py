@@ -30,6 +30,7 @@ class RunContext:
     interview_meta_hash: str
     created_at: str
     prev_scorecard: str | None = None
+    force_pass: bool = False  # debug override: send rejected candidates to interview too
 
 
 @dataclass(frozen=True)

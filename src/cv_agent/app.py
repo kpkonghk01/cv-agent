@@ -89,6 +89,7 @@ def run_screening(
         interview_meta_hash=settings.interview_meta_hash,
         created_at=now,
         prev_scorecard=cli_overrides.get("prev_scorecard"),
+        force_pass=bool(cli_overrides.get("force_pass")),
     )
     deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
     graph = build_candidate_graph(deps, ctx)

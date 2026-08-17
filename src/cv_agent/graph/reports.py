@@ -9,6 +9,7 @@ from __future__ import annotations
 from enum import Enum
 
 from cv_agent.domain.candidate import CandidateProfile
+from cv_agent.domain.rubric import Rubric
 from cv_agent.domain.screening import ScreeningReport
 
 
@@ -19,9 +20,17 @@ class RejectReportMode(str, Enum):
 
 
 def render_reject_report(
-    report: ScreeningReport, profile: CandidateProfile, mode: RejectReportMode
+    report: ScreeningReport,
+    profile: CandidateProfile,
+    mode: RejectReportMode,
+    *,
+    rubric: Rubric | None = None,
 ) -> str | None:
-    """Markdown for a rejected candidate, or None when suppressed."""
+    """Markdown for a rejected candidate, or None when suppressed.
+
+    When the rubric is supplied, each score line shows the requirement's *text* and
+    whether it is a must-have — so the report reads on its own, not as opaque r-ids.
+    """
     if mode is RejectReportMode.NONE:
         return None
 
@@ -30,11 +39,19 @@ def render_reject_report(
     body = [f"# Reject Report — {who}", "", "**Verdict:** reject", "", "## Reasons", reasons]
 
     if mode is RejectReportMode.FULL:
-        scored = "\n".join(
-            f"- `{s.requirement_id}`: {s.level.value}"
-            + (f" — {s.evidence}" if s.evidence else "")
-            for s in report.scores
-        ) or "- (no scores recorded)"
-        body += ["", "## Requirement scores", scored]
+        by_id = {r.id: r for r in (rubric.requirements if rubric else ())}
+        lines = []
+        for s in report.scores:
+            req = by_id.get(s.requirement_id)
+            if req is not None:
+                kind = "must-have" if req.is_must_have else "nice-to-have"
+                label = f"{req.text} `[{kind}]`"
+            else:
+                label = f"`{s.requirement_id}`"
+            line = f"- {label}: **{s.level.value}**"
+            if s.evidence:
+                line += f" — {s.evidence}"
+            lines.append(line)
+        body += ["", "## Requirement scores", "\n".join(lines) or "- (no scores recorded)"]
 
     return "\n".join(body) + "\n"

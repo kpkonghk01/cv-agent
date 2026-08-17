@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from cv_agent.domain import (
     CandidateProfile,
+    Requirement,
+    RequirementKind,
     RequirementScore,
+    Rubric,
     ScoreLevel,
     ScreeningReport,
     Verdict,
@@ -33,7 +36,19 @@ def test_concise_has_reasons_but_no_scores():
 def test_full_includes_requirement_scores():
     out = render_reject_report(_report(), CandidateProfile(name="A"), RejectReportMode.FULL)
     assert "Requirement scores" in out
-    assert "`r1`: unmet" in out
+    assert "`r1`" in out and "**unmet**" in out  # falls back to id without a rubric
+
+
+def test_full_with_rubric_shows_requirement_text_and_kind():
+    rubric = Rubric(
+        requirements=(Requirement(id="r1", text="精通 Python", kind=RequirementKind.MUST_HAVE),)
+    )
+    out = render_reject_report(
+        _report(), CandidateProfile(name="A"), RejectReportMode.FULL, rubric=rubric
+    )
+    assert "精通 Python" in out          # the actual requirement, not just `r1`
+    assert "must-have" in out
+    assert "**unmet**" in out
 
 
 def test_missing_name_falls_back():

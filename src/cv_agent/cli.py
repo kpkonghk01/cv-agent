@@ -41,6 +41,11 @@ def _parser() -> argparse.ArgumentParser:
         "--concise-reject-report", action="store_const", const="concise", dest="reject_mode"
     )
     run.add_argument("--ocr-fallback", action="store_true", help="Reserved (vision-LLM re-OCR).")
+    run.add_argument(
+        "--force-pass",
+        action="store_true",
+        help="Debug: send rejected candidates to the interview node too.",
+    )
     run.add_argument("--round", type=int, help="Interview round label (avoids overwrite).")
     run.add_argument("--prev-scorecard", help="Path to a previous round's scorecard.")
     run.add_argument("--max-concurrency", type=int, help="Reserved; v1 runs sequentially.")
@@ -61,6 +66,7 @@ def _overrides(args: argparse.Namespace) -> dict:
         "reject_mode": args.reject_mode or "full",
         "round": args.round,
         "prev_scorecard": prev,
+        "force_pass": args.force_pass or None,
     }
     return {k: v for k, v in raw.items() if v is not None}
 

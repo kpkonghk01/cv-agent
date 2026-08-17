@@ -74,6 +74,14 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
         report = screen(
             deps.clients[NodeName.SCREEN], state["profile"], ctx.rubric, strictness=ctx.strictness
         )
+        if ctx.force_pass and not report.is_pass:
+            report = report.model_copy(
+                update={
+                    "verdict": Verdict.PASS,
+                    "borderline": True,
+                    "reasons": ("(forced pass — screening overridden)", *report.reasons),
+                }
+            )
         return {"report": report}
 
     def route_verdict(state: CandidateState) -> str:
@@ -98,7 +106,7 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
 
     def reject(state: CandidateState) -> dict:
         profile, report = state["profile"], state["report"]
-        content = render_reject_report(report, profile, ctx.reject_mode)
+        content = render_reject_report(report, profile, ctx.reject_mode, rubric=ctx.rubric)
         path = None
         if content is not None:
             cid = candidate_id(profile.name, state["cv_hash"])
