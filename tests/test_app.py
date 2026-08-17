@@ -8,6 +8,7 @@ import pytest
 
 from cv_agent.app import run_screening
 from cv_agent.domain import CandidateStatus, Verdict
+from cv_agent.graph import uniform_clients
 from cv_agent.hashing import cv_hash, jd_hash
 from cv_agent.ocr import OcrResult
 from cv_agent.sinks import LocalFolderSink
@@ -91,7 +92,7 @@ def _run(store, tmp_path, cv_source, client, notifier, ocr=None, cli=None):
         jd_source=FakeJd(),
         store=store,
         ocr=ocr or FakeOcr(),
-        client=client,
+        clients=uniform_clients(client),
         sink=LocalFolderSink(str(tmp_path)),
         notifier=notifier,
         jd_id="eng.md",
@@ -150,7 +151,7 @@ def _run_with_jd(store, tmp_path, jd_source):
         jd_source=jd_source,
         store=store,
         ocr=FakeOcr(),
-        client=ScriptedClient([PASS]),
+        clients=uniform_clients(ScriptedClient([PASS])),
         sink=LocalFolderSink(str(tmp_path)),
         notifier=FakeNotifier(),
         jd_id="eng.md",

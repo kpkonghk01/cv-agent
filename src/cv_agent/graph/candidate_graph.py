@@ -14,6 +14,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from cv_agent.config import NodeName
 from cv_agent.domain.candidate import CandidateProfile
 from cv_agent.domain.enums import CandidateStatus, Verdict
 from cv_agent.domain.screening import ScreeningReport
@@ -62,13 +63,17 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
 
     def structure(state: CandidateState) -> dict:
         profile = structure_cv(
-            deps.client, state["markdown"], ocr_confidence=state.get("ocr_confidence")
+            deps.clients[NodeName.STRUCTURE_CV],
+            state["markdown"],
+            ocr_confidence=state.get("ocr_confidence"),
         )
         deps.store.put_profile(state["cv_hash"], profile)
         return {"profile": profile}
 
     def screen_node(state: CandidateState) -> dict:
-        report = screen(deps.client, state["profile"], ctx.rubric, strictness=ctx.strictness)
+        report = screen(
+            deps.clients[NodeName.SCREEN], state["profile"], ctx.rubric, strictness=ctx.strictness
+        )
         return {"report": report}
 
     def route_verdict(state: CandidateState) -> str:
@@ -77,7 +82,7 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
     def interview(state: CandidateState) -> dict:
         profile, report = state["profile"], state["report"]
         brief = interview_brief(
-            deps.client,
+            deps.clients[NodeName.INTERVIEW],
             profile,
             ctx.rubric,
             report,

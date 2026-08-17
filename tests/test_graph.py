@@ -19,7 +19,14 @@ from cv_agent.domain import (
     Strictness,
     Verdict,
 )
-from cv_agent.graph import PipelineDeps, RejectReportMode, RunContext, build_candidate_graph
+from cv_agent.config import NodeName
+from cv_agent.graph import (
+    PipelineDeps,
+    RejectReportMode,
+    RunContext,
+    build_candidate_graph,
+    uniform_clients,
+)
 from cv_agent.hashing import cv_hash
 from cv_agent.ocr import OcrResult
 from cv_agent.store import ProcessedRecord, SqliteStore
@@ -91,10 +98,12 @@ def store():
 def _deps(store, tmp_path, sheet):
     from cv_agent.sinks import LocalFolderSink
 
-    return (
-        PipelineDeps(store=store, sink=LocalFolderSink(str(tmp_path)), ocr=FakeOcr(),
-                     client=ScriptedClient(sheet)),
-    )[0]
+    return PipelineDeps(
+        store=store,
+        sink=LocalFolderSink(str(tmp_path)),
+        ocr=FakeOcr(),
+        clients=uniform_clients(ScriptedClient(sheet)),
+    )
 
 
 def _run(deps, ctx):
@@ -139,7 +148,7 @@ def test_already_processed_is_skipped(store, tmp_path):
     state = _run(deps, _ctx())
     assert state["skipped"] is True
     assert deps.ocr.calls == 0
-    assert deps.client.calls == 0
+    assert deps.clients[NodeName.SCREEN].calls == 0
     assert list(Path(tmp_path).glob("*.md")) == []
 
 
@@ -149,4 +158,4 @@ def test_cached_profile_skips_ocr_and_structure(store, tmp_path):
     state = _run(deps, _ctx())
     assert state["verdict"] == "pass"
     assert deps.ocr.calls == 0  # OCR skipped
-    assert deps.client.calls == 2  # screen + interview only (no structure)
+    assert deps.clients[NodeName.SCREEN].calls == 2  # screen + interview only (no structure)

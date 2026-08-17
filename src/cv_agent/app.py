@@ -12,6 +12,7 @@ from collections.abc import Mapping
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from cv_agent.config import NodeName
 from cv_agent.graph.candidate_graph import build_candidate_graph
 from cv_agent.graph.context import PipelineDeps, RunContext
 from cv_agent.hashing import jd_hash
@@ -47,10 +48,10 @@ def load_jd_meta(jd_source, jd_id: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _build_rubric(store, client, jd_text: str, jd_h: str, settings: ResolvedSettings):
+def _build_rubric(store, clients, jd_text: str, jd_h: str, settings: ResolvedSettings):
     rubric = store.get_rubric(jd_h)
     if rubric is None:
-        rubric = jd_to_rubric(client, jd_text)
+        rubric = jd_to_rubric(clients[NodeName.JD_RUBRIC], jd_text)
         store.put_rubric(jd_h, rubric)
     if settings.role_override is not None:
         rubric = rubric.model_copy(update={"role_archetype": settings.role_override})
@@ -63,7 +64,7 @@ def run_screening(
     jd_source,
     store,
     ocr,
-    client,
+    clients,
     sink,
     notifier,
     jd_id: str,
@@ -74,7 +75,7 @@ def run_screening(
     jd_text = jd_source.read_text(jd_id)
     settings = resolve_settings(load_jd_meta(jd_source, jd_id), cli_overrides, default_title=_stem(jd_id))
     jd_h = jd_hash(jd_text)
-    rubric = _build_rubric(store, client, jd_text, jd_h, settings)
+    rubric = _build_rubric(store, clients, jd_text, jd_h, settings)
 
     ctx = RunContext(
         rubric=rubric,
@@ -89,7 +90,7 @@ def run_screening(
         created_at=now,
         prev_scorecard=cli_overrides.get("prev_scorecard"),
     )
-    deps = PipelineDeps(store=store, sink=sink, ocr=ocr, client=client)
+    deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
     graph = build_candidate_graph(deps, ctx)
 
     acc = _Accumulator(threshold=ocr_confidence_threshold)
