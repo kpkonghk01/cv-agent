@@ -21,6 +21,7 @@ class OpenAICompatibleClient:
         temperature: float = 0.2,
         max_tokens: int | None = None,
         disable_thinking: bool = False,
+        json_mode: bool = False,
     ) -> None:
         from openai import OpenAI  # lazy: keeps openai optional for tests
 
@@ -29,6 +30,7 @@ class OpenAICompatibleClient:
         self._temperature = temperature
         self._max_tokens = max_tokens
         self._disable_thinking = disable_thinking
+        self._json_mode = json_mode
 
     def complete(self, messages: Sequence[Message]) -> str:
         kwargs: dict = {
@@ -38,6 +40,11 @@ class OpenAICompatibleClient:
         }
         if self._max_tokens is not None:
             kwargs["max_tokens"] = self._max_tokens
+        # Grammar-constrained JSON stops "reasoning" models deliberating in prose —
+        # the only lever empirically confirmed to work on vMLX + Qwen3. Structured
+        # nodes set this; the free-form interview node must not.
+        if self._json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
         # Reasoning models (e.g. Qwen3) otherwise burn the whole budget "thinking".
         # Ask the chat template to skip it; harmless for models that don't support it.
         extra_body = (

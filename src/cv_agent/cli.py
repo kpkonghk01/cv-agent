@@ -87,9 +87,15 @@ def _build_clients(config: AppConfig) -> dict:
     raw_max = os.environ.get("LLM_MAX_TOKENS")
     max_tokens = int(raw_max) if raw_max else None
     disable_thinking = os.environ.get("LLM_DISABLE_THINKING", "").lower() in ("1", "true", "yes")
+    # The three structured nodes must emit strict JSON; force JSON mode for them.
+    # The interview node writes free-form Markdown, so it must NOT use JSON mode.
+    json_nodes = {NodeName.STRUCTURE_CV, NodeName.JD_RUBRIC, NodeName.SCREEN}
     return {
         node: OpenAICompatibleClient(
-            config.llm[node], max_tokens=max_tokens, disable_thinking=disable_thinking
+            config.llm[node],
+            max_tokens=max_tokens,
+            disable_thinking=disable_thinking,
+            json_mode=node in json_nodes,
         )
         for node in NodeName
     }

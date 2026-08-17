@@ -73,6 +73,15 @@ def test_max_retries_zero_means_single_attempt():
     assert len(client.calls) == 1
 
 
+def test_schema_is_injected_into_the_prompt():
+    # A model in JSON mode needs to know WHICH fields to emit, not just "valid JSON".
+    client = FakeClient([VALID])
+    structured_call(client, LLMConfig, _msgs())
+    sent = " ".join(m["content"] for m in client.calls[0])
+    assert "JSON Schema" in sent
+    assert "base_url" in sent and "model" in sent  # schema field names reach the model
+
+
 def test_original_messages_are_not_mutated():
     msgs = _msgs()
     structured_call(FakeClient([VALID]), LLMConfig, msgs)

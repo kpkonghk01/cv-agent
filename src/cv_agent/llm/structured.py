@@ -7,6 +7,7 @@ Pydantic schema → on failure, feed the error back and retry → give up after 
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import Protocol, TypeVar
 
@@ -48,8 +49,21 @@ def structured_call(
     *,
     max_retries: int = 2,
 ) -> T:
-    """Return an instance of ``schema`` parsed from the model, retrying on bad output."""
-    convo: list[Message] = [dict(m) for m in messages]
+    """Return an instance of ``schema`` parsed from the model, retrying on bad output.
+
+    The schema's field definitions are injected into the prompt — otherwise a model in
+    JSON mode knows it must emit *valid* JSON but not *which fields* to populate.
+    """
+    schema_hint: Message = {
+        "role": "system",
+        "content": (
+            "Respond with a single JSON object conforming to this JSON Schema. "
+            "Populate every field you find evidence for; use null or [] only when truly "
+            "absent. No commentary.\nJSON Schema:\n"
+            + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        ),
+    }
+    convo: list[Message] = [dict(m) for m in messages] + [schema_hint]
     last_error: Exception | None = None
 
     for _ in range(max_retries + 1):
