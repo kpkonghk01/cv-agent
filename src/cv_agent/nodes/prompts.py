@@ -17,14 +17,21 @@ _BILINGUAL = (
 )
 
 
-def structure_messages(markdown: str) -> list[Message]:
+def structure_messages(markdown: str, *, filename: str | None = None) -> list[Message]:
     system = (
         "You extract a structured CandidateProfile as JSON from a CV in Markdown. "
         f"{_BILINGUAL} Output ONLY JSON matching the schema; leave source_markdown empty."
     )
+    user = f"CV markdown:\n\n{markdown}"
+    if filename:
+        user += (
+            "\n\n---\nSource filename (platform exports often embed the candidate's name "
+            "or role here; use it to fill fields the OCR text is missing — e.g. name — but "
+            f"prefer the CV body when they disagree):\n{filename}"
+        )
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"CV markdown:\n\n{markdown}"},
+        {"role": "user", "content": user},
     ]
 
 

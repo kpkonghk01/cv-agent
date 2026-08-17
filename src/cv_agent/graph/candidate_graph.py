@@ -65,6 +65,7 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
         profile = structure_cv(
             deps.clients[NodeName.STRUCTURE_CV],
             state["markdown"],
+            filename=state.get("cv_id"),
             ocr_confidence=state.get("ocr_confidence"),
         )
         deps.store.put_profile(state["cv_hash"], profile)

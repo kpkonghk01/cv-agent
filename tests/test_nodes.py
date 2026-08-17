@@ -38,6 +38,14 @@ def test_structure_cv_maps_and_attaches_source_markdown():
     assert "# Alice\nGo dev" in _user_text(client.calls)
 
 
+def test_structure_cv_passes_filename_as_a_hint():
+    # When the name is baked into an image the OCR misses, the filename can supply it.
+    client = FakeClient('{"name": "王小明"}')
+    profile = structure_cv(client, "# CV body without a name", filename="【後端工程師】王小明 3年.pdf")
+    assert profile.name == "王小明"
+    assert "王小明 3年.pdf" in _user_text(client.calls)
+
+
 # --- jd_to_rubric ---------------------------------------------------------
 
 
