@@ -83,3 +83,35 @@ LangGraph is used as a stateful workflow engine, with a small number of structur
 Google Drive source/sink · Slack notifier · vision-LLM `--ocr-fallback` · LangGraph checkpointer ·
 `M` JDs per run · **Phase 2**: ingest interview scorecards → post-interview evaluation
 (v1 already accepts `--prev-scorecard` as the input half of that seam).
+
+## Operational notes (learned from real runs)
+
+Hard-won field notes — read before debugging an LLM run or blaming a model.
+
+- **Structured output on local/reasoning models needs BOTH levers.** Reasoning models (Qwen3)
+  deliberate in the answer ("我们需要…推断 schema？") and hit the token cap with empty content.
+  Two fixes together: (1) `response_format=json_object` on the structured nodes (grammar stops the
+  rambling); (2) inject the Pydantic JSON Schema into the prompt (json mode only forces *valid*
+  JSON, not the right *fields* — without the schema the model returns `{}`). Both live in the code
+  now; don't remove either.
+- **Disabling "thinking" via `/no_think` or `chat_template_kwargs.enable_thinking=false` did NOT
+  work on vMLX** for these models. `json_object` was the only lever that actually stopped the
+  runaway deliberation. `LLM_DISABLE_THINKING` is kept (harmless) but is not what fixes it.
+- **The free-form interview node needs neither** — writing a document is natural for the model, so
+  it produces a clean brief with no deliberation. Never put `json_mode` on the interview node.
+- **Diagnose by streaming first.** When a call returns empty, stream the raw tokens to *see* what
+  it generates before assuming the model is bad — and check whether the prompt gives the model what
+  it needs (e.g. the schema). Blind black-box re-runs waste minutes each.
+- **Screening verdicts vary by model.** Same CV + JD: the aligned model scored one must-have
+  `unmet` (→ reject); the crack model scored it `partial` (→ borderline pass). The rule is
+  reproducible; the per-Requirement scores are not, across models. In production, pin one model
+  and/or human-review borderlines. Evidence quotes make the divergence explainable.
+- **`max_tokens` is output-only** (separate from the 262k context). 8192 comfortably fit a full
+  interview brief (`finish_reason=stop`). A long JD / very senior role may need more.
+- **Red herring:** `Force-killed llamacpp (pid …)` in logs is Marker's Surya GGUF OCR cleaning up
+  its own worker — **not** the LLM server crashing.
+- **Speed reality:** a 27B on Apple Silicon runs ~10 tok/s and vMLX serves one request at a time
+  (`max_num_seqs=1`), so a CV's four sequential LLM calls take several minutes. Sequential-first is
+  fine; a smaller model is the lever if throughput matters.
+- **Marker force-OCR bypasses the boss直聘 watermark/poisoned-text layer** — validated on a real CV
+  (clean bilingual markdown, two columns linearised).
