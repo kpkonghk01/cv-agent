@@ -41,6 +41,14 @@ _Avoid_: flight risk, loyalty score
 The Filter step's raw output for one Candidate: per-Requirement evidence and score, an overall pass/reject verdict, and reasons. Internal only — persisted in SQLite, never written to the output sink.
 _Avoid_: filter result, review
 
+**Rank score**:
+A weighted 0–100 attainment over all of a JD's Requirements (Met/Partial/Unmet = 1/0.5/0; must-have weighted more than nice-to-have, defaults 2×/1×, overridable per JD). Ranks candidates *within one JD*.
+_Avoid_: fit score, match percentage
+
+**Shortlist**:
+Phase 1's single exported artifact: the candidates screened in a run, ranked by Rank score, cut to the top N, with a per-Requirement breakdown. HR picks whom to interview from it.
+_Avoid_: ranking report, candidate list
+
 **Reject Report**:
 The exported artifact for a rejected Candidate. Defaults to the full Screening Report content; `--concise-reject-report` emits a summary; `--no-reject-report` suppresses it (a full→concise→none fade-out path). Pass candidates never get a standalone screening report — theirs is folded into the Interview Brief recap.
 _Avoid_: rejection notice

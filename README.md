@@ -1,7 +1,7 @@
 # cv-agent
 
-A **per-candidate pipeline** that screens CVs against a job description and drafts interview
-material for the candidates who pass. Each CV flows independently through
+A **two-phase pipeline** that ranks CVs against a job description (**screen** → a shortlist) and
+then drafts interview material for the candidates HR books (**interview**). Each CV flows through
 **OCR → structuring → screening → (if pass) interview prep**.
 
 Built for messy real-world CVs (exported from platforms like boss直聘 with poisoned text layers /
@@ -15,29 +15,30 @@ fully local or against any OpenAI-compatible provider.
 
 ```mermaid
 flowchart TD
-    subgraph perJD[Once per JD]
-        JD[JD .md + .meta.yaml] --> RUBRIC[LLM: JD → Rubric<br/>+ Role Archetype<br/>cache by jd_hash]
+    JD[JD .md + .meta.yaml] --> RUBRIC[LLM: JD → Rubric + Role Archetype<br/>cache by jd_hash]
+    subgraph P1["Phase 1 — screen (each CV since --since)"]
+        SRC[Source: list CVs] --> CACHED{screening cached?}
+        CACHED -- yes --> LOAD[load]
+        CACHED -- no --> OCR[Marker force-OCR<br/>+ text-layer scavenge]
+        OCR --> STRUCT[LLM: structure → CandidateProfile]
+        STRUCT --> SCORE[LLM: score vs Rubric → ScreeningReport<br/>weighted rank_score 0–100]
+        RUBRIC --> SCORE
+        SCORE --> PERSIST[(persist profile + screening)]
     end
-    subgraph perCV[For each CV in the folder]
-        SRC[Source: list CVs] --> DEDUP{processed?<br/>cv_hash + jd_hash}
-        DEDUP -- yes --> SKIP[skip]
-        DEDUP -- no --> OCR[Marker OCR<br/>force_ocr]
-        OCR --> STRUCT[LLM: structure →<br/>CandidateProfile<br/>cache by cv_hash]
-        STRUCT --> SCREEN[LLM: Screen vs Rubric<br/>→ ScreeningReport]
-        RUBRIC --> SCREEN
-        SCREEN --> VERDICT{verdict}
-        VERDICT -- reject --> REJ[Reject Report → ReportSink<br/>default full]
-        VERDICT -- pass --> BRIEF[LLM: Interview Brief → ReportSink<br/>opening + questions + scorecard]
-        REJ --> REG[record ProcessedRegistry]
-        BRIEF --> REG
+    PERSIST --> RANK[rank by score → top N]
+    LOAD --> RANK
+    RANK --> SHORT[Shortlist → ReportSink]
+    SHORT --> HR{HR books interviews}
+    subgraph P2["Phase 2 — interview (accepted only)"]
+        HR --> RELOAD[reload cached profile + screening]
+        RELOAD --> BRIEF[LLM: Interview Brief<br/>scorecard + questions → ReportSink]
     end
-    REG --> SUM[end-of-run summary + Notifier hook]
 ```
 
 Screening is **evidence-based**: the JD becomes a `Rubric` of must-have / nice-to-have
-`Requirement`s; the LLM scores each `Met | Partial | Unmet` with a quote; a deterministic rule
-decides the verdict — **reject only if a must-have is `Unmet`** (loose default; a `Partial`
-must-have passes). See [AGENT.md](./AGENT.md) for the full rule.
+`Requirement`s; the LLM scores each `Met | Partial | Unmet` with a quote. Phase 1 ranks candidates
+by a weighted **`rank_score`** (0–100; must-have weighted more) and keeps the top N. See
+[AGENT.md](./AGENT.md) for the scoring + verdict rules.
 
 ## Quickstart
 
@@ -53,11 +54,14 @@ cp .env.example .env
 #    edit .env — at minimum LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
 
 # 3. Add inputs
-#    CVs (PDF)         -> data/cvs/
+#    CVs (PDF)         -> data/cvs/   (or a Google Drive folder, CV_SOURCE=gdrive)
 #    JD (markdown)     -> data/jds/ai-app-engineer.md  (+ optional .meta.yaml)
 
-# 4. Run
-uv run cv-agent run --jd ai-app-engineer.md
+# 4a. Phase 1 — score everyone, get a ranked shortlist
+uv run cv-agent screen --jd ai-app-engineer.md --since 20260818 --top 20
+
+# 4b. Phase 2 — after HR books interviews, draft briefs for the accepted ones
+uv run cv-agent interview --jd ai-app-engineer.md "陳大文 4年.pdf" "李四"
 ```
 
 Need a **local** LLM on Apple Silicon? See **[vmlx/README.md](./vmlx/README.md)** — it walks through
@@ -87,6 +91,8 @@ exists to *override* defaults.
 | `default_minutes` | int | `45` | Interview length for time allocation |
 | `output_language` | string | `zh-Hant` | Language of questions / reports |
 | `screening_strictness` | `loose` \| `strict` | `loose` | `loose`: a `Partial` must-have passes; `strict`: must be `Met` |
+| `must_weight` | float | `2.0` | Rank-score weight for must-have requirements |
+| `nice_weight` | float | `1.0` | Rank-score weight for nice-to-have requirements |
 
 ```yaml
 # data/jds/ai-app-engineer.meta.yaml   (all fields optional)
@@ -96,40 +102,57 @@ interview_format: technical
 default_minutes: 45
 output_language: zh-Hant
 screening_strictness: loose
+# must_weight: 2.0   # optional rank-score weights
+# nice_weight: 1.0
 ```
+
+### Google Drive CV source (OAuth, read-only)
+
+To read CVs from Drive instead of a local folder, set `CV_SOURCE=gdrive`. CVs must live in
+**date-named subfolders** (`/20260818/…pdf`) under one folder; `--since` keeps folders ≥ that date.
+OAuth acts **as you**, so no folder sharing is needed (useful when only HR can share):
+
+1. [Google Cloud Console](https://console.cloud.google.com) → create a project → enable the
+   **Google Drive API**.
+2. **Google Auth Platform** → *Audience*: User type **Internal** (a Workspace account — tokens
+   don't expire) or External. → *Data access*: add scope `.../auth/drive.readonly`.
+3. *Clients* → create an **OAuth client ID**, type **Desktop app** → download the JSON to
+   `credentials/client_secret.json`.
+4. `.env`: `CV_SOURCE=gdrive`, `GDRIVE_FOLDER_ID=<id from the folder URL>`,
+   `GOOGLE_OAUTH_CLIENT_SECRET=./credentials/client_secret.json`.
+5. The first `screen` run opens a browser once to consent; the token is saved to
+   `credentials/token.json` and reused. `credentials/` is gitignored — never commit it.
 
 ## Running
 
+Two phases, plus a helper. Precedence for overlapping settings: **CLI > JD meta > `.env` > default.**
+
 ```bash
-uv run cv-agent run [options]
-uv run cv-agent list-jds          # list selectable JDs from the JD source
+uv run cv-agent list-jds                         # list selectable JDs
+
+# Phase 1 — score every CV since a date, write ONE ranked shortlist
+uv run cv-agent screen [--jd FILE] [--since YYYYMMDD] [--top N] [--strict|--loose]
+
+# Phase 2 — draft briefs for the candidates HR booked (CV filenames and/or names)
+uv run cv-agent interview [--jd FILE] "cv-file.pdf" "候選人姓名" ...
+uv run cv-agent interview [--jd FILE] --from-file accepted.txt [--round 2] [--prev-scorecard F]
 ```
 
-Precedence for any overlapping setting: **CLI > JD meta > `.env` > built-in default.**
-
-| Option | Effect |
-| --- | --- |
-| `--jd FILE` | Which JD to screen against (else `DEFAULT_JD`, else interactive pick) |
-| `--role`, `--format`, `--minutes`, `--lang` | Override the JD meta fields |
-| `--strict` / `--loose` | Override screening strictness |
-| `--no-reject-report` / `--concise-reject-report` | Trim reject output (default: full) |
-| `--ocr-fallback` | Enable vision-LLM re-OCR on low-confidence pages (reserved) |
-| `--round N` | Label a later interview round so its brief doesn't overwrite the first |
-| `--prev-scorecard FILE` | Feed a previous round's scorecard into the new brief |
-| `--max-concurrency N` | Override `MAX_CONCURRENCY` (default 1, sequential) |
+`screen` options: `--since` (only CVs in date-folders ≥ this — Drive only; local lists all),
+`--top N` (keep the top N). `interview` selectors resolve by **CV filename** (exact; if not yet
+screened you're prompted to OCR it on demand) or **candidate name** (matches a screened profile).
 
 ### Outputs
 
-Written to `data/reports/` (the `ReportSink`), verdict-prefixed:
+Written to `data/reports/` (the `ReportSink`):
 
-- `pass__…__interview-brief.md` — opening remarks, competency-grouped questions with follow-up
-  ladders grounded in the CV, a time budget, and an empty scorecard (produced **before** the
-  interview; contains no answers).
-- `reject__…__reject-report.md` — reject rationale (full by default; trimmable/suppressible).
+- **Phase 1** → `shortlist__<jd>__<since>.md` — one ranked table (top N by `rank_score`) with a
+  per-requirement breakdown for each candidate. Nothing per-candidate is written here.
+- **Phase 2** → `pass__…__interview-brief.md` per accepted candidate — a deterministic screening
+  scorecard, then opening remarks, competency-grouped questions with follow-up ladders grounded in
+  the CV, a time budget, and an empty scorecard (produced **before** the interview; no answers).
 
-The raw internal **Screening Report** stays in SQLite and is never written to the sink. A summary
-(pass/reject counts, reject reasons, and any errors / manual-review flags) prints at the end of each
-run.
+Full Screening Reports live in SQLite (`ScreeningCache`); a summary prints at the end of each phase.
 
 ### Re-analysing a CV (clearing cached results)
 
@@ -164,18 +187,19 @@ cv-agent/
 ├── data/
 │   ├── cvs/         # input CV PDFs        (LocalFolderSource)
 │   ├── jds/         # <name>.md + <name>.meta.yaml
-│   └── reports/     # ReportSink output    (pass__ / reject__ prefixed)
+│   └── reports/     # ReportSink output    (shortlist__ / pass__ )
 ├── evals/           # offline golden-CV evals (LLM semantics; not in coverage gate)
 ├── src/cv_agent/
 │   ├── config.py    cli.py    app.py
 │   ├── domain/      # Pydantic: CandidateProfile, Requirement, Rubric, ScreeningReport, InterviewBrief, RoleArchetype
-│   ├── sources/     # Source port + LocalFolderSource (CV & JD)         → GoogleDriveSource later
-│   ├── store/       # ProfileCache / ProcessedRegistry / RubricCache (SQLite backend)
+│   ├── sources/     # Source port + LocalFolderSource + GoogleDriveSource (CV & JD)
+│   ├── store/       # Profile / Rubric / Screening / Processed caches (SQLite backend)
 │   ├── sinks/       # ReportSink port + LocalFolderSink                 → GoogleDriveSink later
-│   ├── ocr/         # Marker wrapper (force_ocr, multi-page, confidence)
+│   ├── ocr/         # Marker wrapper (force_ocr) + pdfplumber text-layer scavenge
 │   ├── llm/         # BYOK OpenAI-compatible client + per-node resolution + schema-validated retry
 │   ├── nodes/       # structure_cv · jd_to_rubric · screen · interview_brief
-│   ├── graph/       # LangGraph: per-candidate subgraph + folder fan-out
+│   ├── screening_rule.py  # deterministic verdict + weighted rank_score
+│   ├── graph/       # phases (screen / interview) + context + report/shortlist rendering
 │   └── notify/      # Notifier port + NullNotifier (Slack seam, v1 no-op)
 └── tests/
 ```

@@ -7,9 +7,17 @@ lives in [CONTEXT.md](./CONTEXT.md); architectural decisions live in [docs/adr/]
 
 ## What this project is
 
-A **per-candidate pipeline** (not autonomous agents — [ADR 0004](./docs/adr/0004-deterministic-workflow-not-autonomous-agents.md)):
-each CV flows independently through **OCR → structuring → screening → (if pass) interview prep**.
-LangGraph is used as a stateful workflow engine, with a small number of structured LLM nodes.
+A **two-phase, per-candidate pipeline** (deterministic workflow, not autonomous agents —
+[ADR 0004](./docs/adr/0004-deterministic-workflow-not-autonomous-agents.md)):
+
+- **Phase 1 `screen`** — OCR → structure → score every CV (since a date), rank by weighted
+  `rank_score`, write ONE ranked **Shortlist** (top N). Persists profile + full ScreeningReport.
+- **Phase 2 `interview`** — for HR's accepted candidates (by CV filename or name), reload the
+  cached profile + screening and draft the Interview Brief. No re-OCR, no re-screen.
+
+Each phase's per-candidate flow is linear, so it is direct node orchestration
+(`graph/phases.py`); batch fan-out + failure isolation live in `app.py`
+([ADR 0005](./docs/adr/0005-two-phase-workflow.md)). The old combined `run` is gone.
 
 ## Architecture stance
 
@@ -34,12 +42,19 @@ LangGraph is used as a stateful workflow engine, with a small number of structur
   `--strict` / `screening_strictness: strict` requires `Met`).
 - nice-to-have hits become a score used only for ranking + a `borderline` flag (still a pass).
 - `job_hopping` is **advisory**, never an auto-reject unless a JD lists stability as a Requirement.
+- **Ranking (`rank_score`, 0–100)**: weighted attainment over ALL requirements
+  (Met/Partial/Unmet = 1/0.5/0; must-have `must_weight` default 2, nice-to-have `nice_weight`
+  default 1, both overridable in the JD meta). Phase 1 ranks within one JD and takes the top N.
+  Pure ranking — the pass/reject verdict is informational, not a shortlist gate.
 
 ## Persistence (3 caches, one SQLite file — [ADR 0003](./docs/adr/0003-three-layer-cache-dedup.md))
 
 - `ProfileCache` keyed by `cv_hash` (OCR is expensive, JD-independent).
-- `ProcessedRegistry` keyed by `(cv_hash, jd_hash)` (skip-on-rerun; stores verdict/soft-identity/path).
 - `RubricCache` keyed by `jd_hash`.
+- `ScreeningCache` keyed by `(cv_hash, jd_hash)` — the full ScreeningReport, so Phase 2 reloads
+  Phase 1's scoring without re-running the LLM.
+- `ProcessedRegistry` keyed by `(cv_hash, jd_hash)` (legacy verdict summary; superseded by the
+  ScreeningCache in the two-phase flow).
 - Interview Brief unit = `(cv_hash, jd_hash, interview_meta_hash)` → never overwrite across rounds.
 - Dedup by content hash; re-exported PDF = new CV (accepted v1 limitation).
 
@@ -54,8 +69,9 @@ LangGraph is used as a stateful workflow engine, with a small number of structur
 
 ## Modular ports (adapters swap without touching flow)
 
-`Source` (CV & JD; LocalFolder → GoogleDrive) · `ProcessedRegistry`/`RubricCache`/`ProfileCache`
-(SQLite → …) · `ReportSink` (LocalFolder → GoogleDrive) · `Notifier` (NullNotifier → Slack, v1 no-op).
+`Source` (CV & JD; LocalFolder **or GoogleDrive**, `CV_SOURCE=local|gdrive`) · SQLite caches
+(Profile/Rubric/Screening/Processed) · `ReportSink` (LocalFolder → GoogleDrive) ·
+`Notifier` (NullNotifier → Slack, v1 no-op). Text-layer scavenge (pdfplumber) supplements OCR.
 
 ## Config precedence
 
@@ -80,10 +96,12 @@ LangGraph is used as a stateful workflow engine, with a small number of structur
 
 ## Deferred (seams left in place)
 
-Google Drive source/sink · Slack notifier · vision-LLM `--ocr-fallback` (image-only CVs; text-layer
-scavenge already covers the common image-name gap) · LangGraph checkpointer ·
-`M` JDs per run · **Phase 2**: ingest interview scorecards → post-interview evaluation
-(v1 already accepts `--prev-scorecard` as the input half of that seam).
+Google Drive **sink** (source is done) · Slack notifier · vision-LLM `--ocr-fallback` (image-only
+CVs; text-layer scavenge already covers the common image-name gap) · `M` JDs per run ·
+post-interview evaluation (ingest scorecards; `--prev-scorecard` is the input half).
+
+LangGraph is no longer used (the two-phase flows are linear — ADR 0005); the dependency remains
+so a checkpointer/HITL graph can be reintroduced if a phase ever needs branching or resumability.
 
 ## Operational notes (learned from real runs)
 
