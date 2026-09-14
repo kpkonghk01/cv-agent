@@ -40,6 +40,27 @@ def test_profile_is_immutable():
         p.name = "Bob"  # type: ignore[misc]
 
 
+def test_string_list_entries_are_coerced_to_objects():
+    # Some models return a list of strings where the schema wants objects (DeepSeek).
+    p = CandidateProfile(
+        education=["主修：数据库原理", {"school": "X大学", "degree": "本科"}],
+        work_experience=["某公司做後端"],
+        projects=["某專案"],
+        certifications=["PMP"],
+    )
+    assert p.education[0].school == "主修：数据库原理"   # string wrapped
+    assert p.education[1].degree == "本科"               # dict preserved
+    assert p.work_experience[0].company == "某公司做後端"
+    assert p.projects[0].name == "某專案"
+    assert p.certifications[0].name == "PMP"
+
+
+def test_non_list_field_value_passes_through_then_fails_type_check():
+    # The coercion guard returns non-list values unchanged; type validation then rejects.
+    with pytest.raises(ValidationError):
+        CandidateProfile(education="not a list")
+
+
 def test_rubric_partitions_must_and_nice():
     rubric = Rubric(
         role_archetype=RoleArchetype.TECHNICAL,

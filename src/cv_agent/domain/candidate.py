@@ -6,11 +6,19 @@ mutated in place. See CONTEXT.md for the domain terms.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True)
+
+
+def _as_objects(items, key: str):
+    """Coerce bare-string list elements into ``{key: string}`` — some models return a
+    list of strings where the schema wants a list of objects (seen with DeepSeek)."""
+    if not isinstance(items, (list, tuple)):
+        return items
+    return [{key: it} if isinstance(it, str) else it for it in items]
 
 
 class Contact(_Frozen):
@@ -76,3 +84,23 @@ class CandidateProfile(_Frozen):
     ocr_confidence: float | None = None
     source_markdown: str = ""
     extras: dict[str, str] = {}
+
+    @field_validator("education", mode="before")
+    @classmethod
+    def _coerce_education(cls, v):
+        return _as_objects(v, "school")
+
+    @field_validator("work_experience", mode="before")
+    @classmethod
+    def _coerce_work(cls, v):
+        return _as_objects(v, "company")
+
+    @field_validator("projects", mode="before")
+    @classmethod
+    def _coerce_projects(cls, v):
+        return _as_objects(v, "name")
+
+    @field_validator("certifications", mode="before")
+    @classmethod
+    def _coerce_certifications(cls, v):
+        return _as_objects(v, "name")
