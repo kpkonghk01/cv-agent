@@ -45,6 +45,7 @@ def _parser() -> argparse.ArgumentParser:
     _add_common(screen)
     screen.add_argument("--since", help="Only CVs in date-folders >= this (e.g. 20260818).")
     screen.add_argument("--top", type=int, help="Keep only the top N in the shortlist.")
+    screen.add_argument("--limit", type=int, help="Cap how many CVs to OCR+score (cost/test).")
 
     interview = sub.add_parser("interview", help="Phase 2: draft briefs for accepted candidates.")
     _add_common(interview)
@@ -155,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         if args.command == "screen":
-            summary = run_screen(**common, since=args.since, top_n=args.top)
+            summary = run_screen(**common, since=args.since, top_n=args.top, limit=args.limit)
             print(render_screen_summary(summary))
         else:  # interview
             summary = run_interview(**common, selectors=_selectors(args), confirm=_confirm)

@@ -114,13 +114,17 @@ def run_screen(
     now: str,
     since: str | None = None,
     top_n: int | None = None,
+    limit: int | None = None,
 ) -> ScreenSummary:
     ctx, settings = _context(jd_source, store, clients, jd_id, cli_overrides, now)
     deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
 
     entries: list[ShortlistEntry] = []
     errors: list[str] = []
-    for ref in cv_source.list(since):
+    refs = cv_source.list(since)
+    if limit is not None:
+        refs = refs[:limit]  # cost/test cap on how many CVs to OCR + score
+    for ref in refs:
         # ref.name is the human filename (candidate hint + display); ref.id reads bytes
         # (== filename locally, an opaque file id on Drive).
         try:

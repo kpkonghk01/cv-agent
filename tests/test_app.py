@@ -127,6 +127,12 @@ def test_screen_top_n_truncates(store, tmp_path):
     assert summary.shortlisted == 1
 
 
+def test_screen_limit_caps_how_many_are_scored(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA", "b.pdf": b"BBB", "c.pdf": b"CCC"})
+    summary = run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS])), limit=1)
+    assert summary.total == 1  # only the first CV was OCR'd + scored
+
+
 def test_screen_persists_profile_and_screening(store, tmp_path):
     cv = FakeCv({"a.pdf": b"AAA"})
     run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS])))
