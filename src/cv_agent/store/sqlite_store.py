@@ -7,6 +7,7 @@ is a model concern, not a migration concern, for v1. Use ``:memory:`` in tests.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from types import TracebackType
 
 from cv_agent.domain.candidate import CandidateProfile
@@ -42,7 +43,9 @@ class SqliteStore:
     def __init__(self, path: str) -> None:
         if not path:
             raise ValueError("SqliteStore requires a path (use ':memory:' for tests)")
-        self._conn = sqlite3.connect(path)
+        # check_same_thread=False + a lock make the store usable from a thread pool.
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.Lock()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
@@ -61,12 +64,13 @@ class SqliteStore:
 
     def find_cv_by_name(self, name: str) -> tuple[str, ...]:
         """cv_hashes whose profile name contains ``name`` (case-insensitive)."""
-        cur = self._conn.execute(
-            "SELECT cv_hash FROM profiles "
-            "WHERE lower(json_extract(json, '$.name')) LIKE '%' || lower(?) || '%'",
-            (name,),
-        )
-        return tuple(row[0] for row in cur.fetchall())
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT cv_hash FROM profiles "
+                "WHERE lower(json_extract(json, '$.name')) LIKE '%' || lower(?) || '%'",
+                (name,),
+            )
+            return tuple(row[0] for row in cur.fetchall())
 
     # --- RubricCache ------------------------------------------------------
 
@@ -154,18 +158,21 @@ class SqliteStore:
     # --- Internals & lifecycle -------------------------------------------
 
     def _delete(self, sql: str, params: tuple[object, ...]) -> int:
-        cur = self._conn.execute(sql, params)
-        self._conn.commit()
-        return cur.rowcount
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            self._conn.commit()
+            return cur.rowcount
 
     def _fetch(self, sql: str, params: tuple[object, ...]) -> str | None:
-        cur = self._conn.execute(sql, params)
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            row = cur.fetchone()
         return row[0] if row else None
 
     def _upsert(self, sql: str, params: tuple[object, ...]) -> None:
-        self._conn.execute(sql, params)
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(sql, params)
+            self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()

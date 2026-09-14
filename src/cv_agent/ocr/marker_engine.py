@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 
 from cv_agent.ocr.ports import OcrResult
 
@@ -17,6 +18,7 @@ class MarkerOcrEngine:
     def __init__(self, *, force_ocr: bool = True) -> None:
         self._force_ocr = force_ocr
         self._converter = None  # built lazily on first use
+        self._lock = threading.Lock()  # torch/MPS inference is not thread-safe
 
     def _ensure_converter(self) -> None:
         from marker.converters.pdf import PdfConverter
@@ -30,14 +32,15 @@ class MarkerOcrEngine:
     def to_markdown(self, pdf_bytes: bytes) -> OcrResult:
         from marker.output import text_from_rendered
 
-        if self._converter is None:
-            self._ensure_converter()
-
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp.write(pdf_bytes)
             path = tmp.name
         try:
-            rendered = self._converter(path)  # type: ignore[misc]
+            # Serialise OCR: a shared torch/MPS converter is not safe to call concurrently.
+            with self._lock:
+                if self._converter is None:
+                    self._ensure_converter()
+                rendered = self._converter(path)  # type: ignore[misc]
             markdown, _, _ = text_from_rendered(rendered)
         finally:
             os.unlink(path)

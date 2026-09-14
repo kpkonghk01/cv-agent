@@ -9,7 +9,9 @@ Pure and testable: every adapter is injected. Real construction from AppConfig i
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 from pydantic import BaseModel, ConfigDict
@@ -115,6 +117,7 @@ def run_screen(
     since: str | None = None,
     top_n: int | None = None,
     limit: int | None = None,
+    concurrency: int = 1,
     progress: Callable[[str], None] = lambda _: None,
 ) -> ScreenSummary:
     progress("preparing rubric…")
@@ -127,18 +130,44 @@ def run_screen(
     if limit is not None:
         refs = refs[:limit]  # cost/test cap on how many CVs to OCR + score
     total = len(refs)
-    progress(f"screening {total} CV(s)…")
-    for i, ref in enumerate(refs, 1):
-        progress(f"[{i}/{total}] {ref.name}")
+    progress(f"screening {total} CV(s)… (concurrency={concurrency})")
+    plock = threading.Lock()
+    counter = {"n": 0}
+
+    def _work(ref):
         try:
-            profile, report = _screen_ref(deps, ctx, ref, cv_source, progress)
+            profile, report, cached = _screen_ref(deps, ctx, ref, cv_source)
+            outcome: tuple = ("ok", ref, profile, report, cached)
         except Exception as err:  # per-candidate isolation
-            progress(f"    ✗ error: {err}")
+            outcome = ("err", ref, err)
+        with plock:  # atomic, ordered progress even from worker threads
+            counter["n"] += 1
+            n = counter["n"]
+            if outcome[0] == "ok":
+                tag = "cached " if outcome[4] else ""
+                progress(
+                    f"[{n}/{total}] {ref.name} → {tag}{outcome[3].rank_score:g} "
+                    f"({outcome[3].verdict.value})"
+                )
+            else:
+                progress(f"[{n}/{total}] {ref.name} ✗ {outcome[2]}")
+        return outcome
+
+    if concurrency <= 1:
+        outcomes = [_work(ref) for ref in refs]
+    else:
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            outcomes = list(pool.map(_work, refs))
+
+    for outcome in outcomes:
+        if outcome[0] == "ok":
+            _, ref, profile, report, _cached = outcome
+            entries.append(
+                ShortlistEntry(name=profile.name or ref.name, cv_id=ref.name, report=report)
+            )
+        else:
+            _, ref, err = outcome
             errors.append(f"{ref.name}: {err}")
-            continue
-        entries.append(
-            ShortlistEntry(name=profile.name or ref.name, cv_id=ref.name, report=report)
-        )
 
     entries.sort(key=lambda e: e.report.rank_score, reverse=True)
     top = tuple(entries[:top_n]) if top_n else tuple(entries)
@@ -160,21 +189,19 @@ def run_screen(
     return summary
 
 
-def _screen_ref(deps, ctx, ref, cv_source, progress):
+def _screen_ref(deps, ctx, ref, cv_source):
     """Screen one source ref. If the file id is a known, fully-cached CV, load it without
     downloading; otherwise download, screen, and remember file id → cv_hash. Returns
-    (profile, report)."""
+    (profile, report, from_cache)."""
     known = deps.store.get_cv_hash(ref.id)
     if known is not None:
         report = deps.store.get_screening(known, ctx.jd_hash)
         profile = deps.store.get_profile(known)
         if report is not None and profile is not None:
-            progress(f"    → cached {report.rank_score:g} (skipped download)")
-            return profile, report
+            return profile, report, True
     digest, profile, report = screen_candidate(deps, ctx, ref.name, cv_source.read_bytes(ref.id))
     deps.store.put_cv_hash(ref.id, digest)
-    progress(f"    → {report.rank_score:g} ({report.verdict.value})")
-    return profile, report
+    return profile, report, False
 
 
 # --- Phase 2: interview accepted candidates ------------------------------

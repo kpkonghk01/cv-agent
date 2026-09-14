@@ -156,6 +156,30 @@ def test_screen_records_source_index_after_first_download(store, tmp_path):
     assert store.get_cv_hash("a.pdf") == cv_hash(b"AAA")  # remembered for next time
 
 
+class AlwaysPassClient:
+    """Thread-safe fake (no shared mutable state) for the concurrency test."""
+
+    def complete(self, messages):
+        s = messages[0]["content"]
+        if "screening Rubric" in s:
+            return RUBRIC
+        if "CandidateProfile" in s:
+            return PROFILE
+        if "score a candidate" in s:
+            return PASS
+        return BRIEF
+
+
+def test_screen_concurrency_scores_all_and_writes_shortlist(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"A", "b.pdf": b"B", "c.pdf": b"C", "d.pdf": b"D"})
+    summary = run_screen(**_common(store, tmp_path, cv, AlwaysPassClient()), concurrency=4)
+    assert summary.total == 4
+    assert summary.shortlisted == 4
+    # every CV was screened + persisted despite running in parallel
+    for b in (b"A", b"B", b"C", b"D"):
+        assert store.get_screening(cv_hash(b), JDH) is not None
+
+
 def test_screen_persists_profile_and_screening(store, tmp_path):
     cv = FakeCv({"a.pdf": b"AAA"})
     run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS])))
