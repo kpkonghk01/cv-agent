@@ -86,3 +86,44 @@ def test_original_messages_are_not_mutated():
     msgs = _msgs()
     structured_call(FakeClient([VALID]), LLMConfig, msgs)
     assert msgs == [{"role": "user", "content": "give me config"}]
+
+
+# --- is_local_base_url: gate local-only inference knobs (e.g. enable_thinking) ---
+
+import pytest as _pytest  # noqa: E402
+
+from cv_agent.llm import is_local_base_url  # noqa: E402
+
+
+@_pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8000/v1",
+        "http://127.0.0.1:1234/v1",
+        "http://0.0.0.0:8000/v1",
+        "http://192.168.1.50:8000/v1",   # private LAN
+        "http://10.0.0.7:8000/v1",       # private LAN
+        "http://172.16.5.4:8000/v1",     # private LAN
+        "http://[::1]:8000/v1",          # IPv6 loopback
+        "http://mac-studio.local:8080/v1",
+        "localhost:8000/v1",             # bare host:port, no scheme
+    ],
+)
+def test_is_local_base_url_true_for_local_endpoints(url):
+    assert is_local_base_url(url) is True
+
+
+@_pytest.mark.parametrize(
+    "url",
+    [
+        "https://openrouter.ai/api/v1",
+        "https://api.deepseek.com/v1",
+        "https://api.openai.com/v1",
+        "http://8.8.8.8/v1",             # public IP
+        "",
+        None,
+        "://no-host",                    # unparseable host
+    ],
+)
+def test_is_local_base_url_false_for_public_or_empty(url):
+    assert is_local_base_url(url) is False

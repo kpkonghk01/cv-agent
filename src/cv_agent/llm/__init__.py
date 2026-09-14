@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cv_agent.llm.client import OpenAICompatibleClient
+from cv_agent.llm.endpoint import is_local_base_url
 from cv_agent.llm.structured import (
     LLMClient,
     LLMOutputError,
@@ -16,4 +17,5 @@ __all__ = [
     "Message",
     "structured_call",
     "OpenAICompatibleClient",
+    "is_local_base_url",
 ]

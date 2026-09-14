@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from cv_agent.config import LLMConfig
+from cv_agent.llm.endpoint import is_local_base_url
 from cv_agent.llm.structured import Message
 
 
@@ -29,7 +30,9 @@ class OpenAICompatibleClient:
         self._model = config.model
         self._temperature = temperature
         self._max_tokens = max_tokens
-        self._disable_thinking = disable_thinking
+        # enable_thinking=False is a local-inference (vLLM/SGLang/MLX + Qwen3 template) knob;
+        # only send it to a local endpoint — public providers ignore it or reject it (400).
+        self._disable_thinking = disable_thinking and is_local_base_url(config.base_url)
         self._json_mode = json_mode
 
     def complete(self, messages: Sequence[Message]) -> str:
