@@ -115,7 +115,9 @@ def run_screen(
     since: str | None = None,
     top_n: int | None = None,
     limit: int | None = None,
+    progress: Callable[[str], None] = lambda _: None,
 ) -> ScreenSummary:
+    progress("preparing rubric…")
     ctx, settings = _context(jd_source, store, clients, jd_id, cli_overrides, now)
     deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
 
@@ -124,16 +126,21 @@ def run_screen(
     refs = cv_source.list(since)
     if limit is not None:
         refs = refs[:limit]  # cost/test cap on how many CVs to OCR + score
-    for ref in refs:
+    total = len(refs)
+    progress(f"screening {total} CV(s)…")
+    for i, ref in enumerate(refs, 1):
         # ref.name is the human filename (candidate hint + display); ref.id reads bytes
         # (== filename locally, an opaque file id on Drive).
+        progress(f"[{i}/{total}] {ref.name}")
         try:
             digest, profile, report = screen_candidate(
                 deps, ctx, ref.name, cv_source.read_bytes(ref.id)
             )
         except Exception as err:  # per-candidate isolation
+            progress(f"    ✗ error: {err}")
             errors.append(f"{ref.name}: {err}")
             continue
+        progress(f"    → {report.rank_score:g} ({report.verdict.value})")
         entries.append(
             ShortlistEntry(name=profile.name or ref.name, cv_id=ref.name, report=report)
         )
@@ -145,6 +152,7 @@ def run_screen(
         top, ctx.rubric, jd_title=settings.title, since=label, total_screened=len(entries)
     )
     path = sink.write(shortlist_filename(ctx.jd_slug, label), content)
+    progress(f"shortlist → {path}")
 
     summary = ScreenSummary(
         total=len(entries),
@@ -174,6 +182,7 @@ def run_interview(
     cli_overrides: Mapping[str, object],
     now: str,
     confirm: Callable[[str], bool],
+    progress: Callable[[str], None] = lambda _: None,
 ) -> InterviewSummary:
     ctx, _ = _context(jd_source, store, clients, jd_id, cli_overrides, now)
     deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
@@ -181,12 +190,15 @@ def run_interview(
 
     briefs: list[str] = []
     skipped: list[str] = []
-    for sel in selectors:
+    for i, sel in enumerate(selectors, 1):
+        progress(f"[{i}/{len(selectors)}] {sel}")
         resolved = _resolve(deps, ctx, sel, cv_source, by_filename, confirm, skipped)
         if resolved is None:
             continue
         digest, profile, report = resolved
-        briefs.append(interview_candidate(deps, ctx, digest, profile, report))
+        path = interview_candidate(deps, ctx, digest, profile, report)
+        progress(f"    → {path}")
+        briefs.append(path)
 
     summary = InterviewSummary(generated=len(briefs), briefs=tuple(briefs), skipped=tuple(skipped))
     notifier.notify(render_interview_summary(summary))

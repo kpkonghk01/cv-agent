@@ -153,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         jd_id=jd_id,
         cli_overrides=_overrides(args),
         now=datetime.now(timezone.utc).isoformat(),
+        progress=lambda msg: print(msg, file=sys.stderr, flush=True),
     )
     try:
         if args.command == "screen":

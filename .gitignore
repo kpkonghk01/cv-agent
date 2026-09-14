@@ -32,3 +32,5 @@ evals/*
 .DS_Store
 .idea/
 .vscode/
+
+credentials
