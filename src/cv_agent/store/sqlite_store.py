@@ -11,12 +11,19 @@ from types import TracebackType
 
 from cv_agent.domain.candidate import CandidateProfile
 from cv_agent.domain.rubric import Rubric
+from cv_agent.domain.screening import ScreeningReport
 from cv_agent.store.records import ProcessedRecord
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (cv_hash TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS rubrics  (jd_hash TEXT PRIMARY KEY, json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS processed (
+    cv_hash TEXT NOT NULL,
+    jd_hash TEXT NOT NULL,
+    json    TEXT NOT NULL,
+    PRIMARY KEY (cv_hash, jd_hash)
+);
+CREATE TABLE IF NOT EXISTS screenings (
     cv_hash TEXT NOT NULL,
     jd_hash TEXT NOT NULL,
     json    TEXT NOT NULL,
@@ -80,6 +87,20 @@ class SqliteStore:
             (record.cv_hash, record.jd_hash, record.model_dump_json()),
         )
 
+    # --- ScreeningCache (full report, keyed by (cv_hash, jd_hash)) --------
+
+    def get_screening(self, cv_hash: str, jd_hash: str) -> ScreeningReport | None:
+        row = self._fetch(
+            "SELECT json FROM screenings WHERE cv_hash = ? AND jd_hash = ?", (cv_hash, jd_hash)
+        )
+        return ScreeningReport.model_validate_json(row) if row else None
+
+    def put_screening(self, cv_hash: str, jd_hash: str, report: ScreeningReport) -> None:
+        self._upsert(
+            "INSERT OR REPLACE INTO screenings (cv_hash, jd_hash, json) VALUES (?, ?, ?)",
+            (cv_hash, jd_hash, report.model_dump_json()),
+        )
+
     # --- Forget (maintenance: force re-analysis of a CV) ------------------
 
     def forget_profile(self, cv_hash: str) -> int:
@@ -92,6 +113,14 @@ class SqliteStore:
             return self._delete("DELETE FROM processed WHERE cv_hash = ?", (cv_hash,))
         return self._delete(
             "DELETE FROM processed WHERE cv_hash = ? AND jd_hash = ?", (cv_hash, jd_hash)
+        )
+
+    def forget_screening(self, cv_hash: str, jd_hash: str | None = None) -> int:
+        """Drop cached full screening reports for a CV — all JDs, or one."""
+        if jd_hash is None:
+            return self._delete("DELETE FROM screenings WHERE cv_hash = ?", (cv_hash,))
+        return self._delete(
+            "DELETE FROM screenings WHERE cv_hash = ? AND jd_hash = ?", (cv_hash, jd_hash)
         )
 
     # --- Internals & lifecycle -------------------------------------------

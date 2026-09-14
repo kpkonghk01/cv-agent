@@ -52,14 +52,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.jd:
             jd_h = jd_hash(_resolve(args.jd, jd_dir, "JD").read_text(encoding="utf-8"))
-            n = store.forget_processed(cv_h, jd_h)
-            print(f"Cleared {n} judgment(s) for CV {cv_h[:8]} × JD {jd_h[:8]}. Profile kept.")
+            n = store.forget_processed(cv_h, jd_h) + store.forget_screening(cv_h, jd_h)
+            print(f"Cleared {n} judgment/screening row(s) for CV {cv_h[:8]} × JD {jd_h[:8]}. "
+                  "Profile kept.")
         else:
             profiles = store.forget_profile(cv_h)
-            judged = store.forget_processed(cv_h)
+            judged = store.forget_processed(cv_h) + store.forget_screening(cv_h)
             print(
-                f"Cleared profile ({profiles}) + {judged} judgment(s) for CV {cv_h[:8]}. "
-                "It will be fully re-analysed on the next run."
+                f"Cleared profile ({profiles}) + {judged} judgment/screening row(s) for CV "
+                f"{cv_h[:8]}. It will be fully re-analysed on the next run."
             )
     finally:
         store.close()

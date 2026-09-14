@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 
 from cv_agent.domain.candidate import CandidateProfile
 from cv_agent.domain.rubric import Rubric
+from cv_agent.domain.screening import ScreeningReport
 from cv_agent.store.records import ProcessedRecord
 
 
@@ -43,5 +44,15 @@ class ProcessedRegistry(Protocol):
 
 
 @runtime_checkable
-class Store(ProfileCache, RubricCache, ProcessedRegistry, Protocol):
-    """A backend that provides all three caches (the SQLite store does)."""
+class ScreeningCache(Protocol):
+    """Full Screening Reports keyed by ``(cv_hash, jd_hash)`` — so Phase 2 (interview)
+    reloads Phase 1's scoring without re-running the LLM."""
+
+    def get_screening(self, cv_hash: str, jd_hash: str) -> ScreeningReport | None: ...
+
+    def put_screening(self, cv_hash: str, jd_hash: str, report: ScreeningReport) -> None: ...
+
+
+@runtime_checkable
+class Store(ProfileCache, RubricCache, ProcessedRegistry, ScreeningCache, Protocol):
+    """A backend that provides every cache (the SQLite store does)."""

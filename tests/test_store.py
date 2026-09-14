@@ -141,6 +141,29 @@ def test_forget_processed_all_jds_for_a_cv(store):
     assert store.is_processed("cv2", "jd1") is True  # other CV kept
 
 
+def test_screening_round_trip_and_keying(store):
+    from cv_agent.domain import ScreeningReport, Verdict
+
+    report = ScreeningReport(verdict=Verdict.PASS, rank_score=72.5, reasons=("ok",))
+    assert store.get_screening("cv1", "jd1") is None
+    store.put_screening("cv1", "jd1", report)
+    got = store.get_screening("cv1", "jd1")
+    assert got.rank_score == 72.5
+    assert got.verdict is Verdict.PASS
+    assert store.get_screening("cv1", "jd2") is None  # keyed by (cv, jd)
+
+
+def test_forget_screening_scoped(store):
+    from cv_agent.domain import ScreeningReport
+
+    store.put_screening("cv1", "jd1", ScreeningReport())
+    store.put_screening("cv1", "jd2", ScreeningReport())
+    assert store.forget_screening("cv1", "jd1") == 1
+    assert store.get_screening("cv1", "jd1") is None
+    assert store.get_screening("cv1", "jd2") is not None
+    assert store.forget_screening("cv1") == 1  # remaining
+
+
 def test_data_persists_across_instances(tmp_path):
     db = str(tmp_path / "s.sqlite")
     with SqliteStore(db) as s:
