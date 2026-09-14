@@ -39,3 +39,8 @@ def interview_brief_filename(cand_id: str, jd_slug: str, discriminator: str) -> 
 def reject_report_filename(cand_id: str, jd_slug: str) -> str:
     """`reject__{candidate}__{jd}__reject-report.md`"""
     return f"reject__{cand_id}__{jd_slug}__reject-report.md"
+
+
+def shortlist_filename(jd_slug: str, since: str) -> str:
+    """`shortlist__{jd}__{since}.md` — one ranked list per screen run."""
+    return f"shortlist__{jd_slug}__{since}.md"

@@ -1,4 +1,4 @@
-"""Command-line entry point. Loads .env, builds real adapters, runs a screening.
+"""Command-line entry point (two-phase). Loads .env, builds real adapters, runs a phase.
 
 Real IO / wiring only (excluded from the coverage gate); the logic it calls is tested.
 """
@@ -12,7 +12,12 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-from cv_agent.app import render_summary, run_screening
+from cv_agent.app import (
+    render_interview_summary,
+    render_screen_summary,
+    run_interview,
+    run_screen,
+)
 from cv_agent.config import AppConfig, NodeName
 from cv_agent.notify import NullNotifier
 from cv_agent.sinks import LocalFolderSink
@@ -21,53 +26,47 @@ from cv_agent.store import SqliteStore
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="cv-agent", description="Screen CVs against a JD.")
+    p = argparse.ArgumentParser(prog="cv-agent", description="Screen CVs and draft interviews.")
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list-jds", help="List selectable JDs from the JD source.")
 
-    run = sub.add_parser("run", help="Screen every CV against one JD.")
-    run.add_argument("--jd", help="JD filename (else DEFAULT_JD, else interactive).")
-    run.add_argument("--role", help="Override role archetype (technical|management|hybrid).")
-    run.add_argument("--format", help="Interview format (technical|behavioral|mixed).")
-    run.add_argument("--minutes", type=int, help="Interview length.")
-    run.add_argument("--lang", help="Output language (default zh-Hant).")
-    strict = run.add_mutually_exclusive_group()
-    strict.add_argument("--strict", action="store_const", const="strict", dest="strictness")
-    strict.add_argument("--loose", action="store_const", const="loose", dest="strictness")
-    reject = run.add_mutually_exclusive_group()
-    reject.add_argument("--no-reject-report", action="store_const", const="none", dest="reject_mode")
-    reject.add_argument(
-        "--concise-reject-report", action="store_const", const="concise", dest="reject_mode"
-    )
-    run.add_argument("--ocr-fallback", action="store_true", help="Reserved (vision-LLM re-OCR).")
-    run.add_argument(
-        "--force-pass",
-        action="store_true",
-        help="Debug: send rejected candidates to the interview node too.",
-    )
-    run.add_argument("--round", type=int, help="Interview round label (avoids overwrite).")
-    run.add_argument("--prev-scorecard", help="Path to a previous round's scorecard.")
-    run.add_argument("--max-concurrency", type=int, help="Reserved; v1 runs sequentially.")
+    def _add_common(sp):
+        sp.add_argument("--jd", help="JD filename (else DEFAULT_JD, else interactive).")
+        sp.add_argument("--role", help="Override role archetype.")
+        sp.add_argument("--format", help="Interview format.")
+        sp.add_argument("--minutes", type=int, help="Interview length.")
+        sp.add_argument("--lang", help="Output language.")
+        strict = sp.add_mutually_exclusive_group()
+        strict.add_argument("--strict", action="store_const", const="strict", dest="strictness")
+        strict.add_argument("--loose", action="store_const", const="loose", dest="strictness")
+
+    screen = sub.add_parser("screen", help="Phase 1: score CVs since a date → ranked shortlist.")
+    _add_common(screen)
+    screen.add_argument("--since", help="Only CVs in date-folders >= this (e.g. 20260818).")
+    screen.add_argument("--top", type=int, help="Keep only the top N in the shortlist.")
+
+    interview = sub.add_parser("interview", help="Phase 2: draft briefs for accepted candidates.")
+    _add_common(interview)
+    interview.add_argument("candidates", nargs="*", help="CV filenames or candidate names.")
+    interview.add_argument("--from-file", help="File with one filename/name per line.")
+    interview.add_argument("--round", type=int, help="Interview round label (avoids overwrite).")
+    interview.add_argument("--prev-scorecard", help="Path to a previous round's scorecard.")
     return p
 
 
 def _overrides(args: argparse.Namespace) -> dict:
-    prev = None
-    if args.prev_scorecard:
-        with open(args.prev_scorecard, encoding="utf-8") as fh:
-            prev = fh.read()
     raw = {
-        "role": args.role,
-        "format": args.format,
-        "minutes": args.minutes,
-        "lang": args.lang,
-        "strictness": args.strictness,
-        "reject_mode": args.reject_mode or "full",
-        "round": args.round,
-        "prev_scorecard": prev,
-        "force_pass": args.force_pass or None,
+        "role": getattr(args, "role", None),
+        "format": getattr(args, "format", None),
+        "minutes": getattr(args, "minutes", None),
+        "lang": getattr(args, "lang", None),
+        "strictness": getattr(args, "strictness", None),
+        "round": getattr(args, "round", None),
     }
+    if getattr(args, "prev_scorecard", None):
+        with open(args.prev_scorecard, encoding="utf-8") as fh:
+            raw["prev_scorecard"] = fh.read()
     return {k: v for k, v in raw.items() if v is not None}
 
 
@@ -83,8 +82,15 @@ def _resolve_jd(cli_jd: str | None, default_jd: str | None, jd_source) -> str:
         return choices[0].id
     for i, ref in enumerate(choices, 1):
         print(f"  {i}. {ref.id}")
-    picked = input("Select a JD number: ").strip()
-    return choices[int(picked) - 1].id
+    return choices[int(input("Select a JD number: ").strip()) - 1].id
+
+
+def _selectors(args: argparse.Namespace) -> list[str]:
+    items = list(args.candidates)
+    if args.from_file:
+        with open(args.from_file, encoding="utf-8") as fh:
+            items += [ln.strip() for ln in fh if ln.strip()]
+    return items
 
 
 def _build_clients(config: AppConfig) -> dict:
@@ -93,8 +99,6 @@ def _build_clients(config: AppConfig) -> dict:
     raw_max = os.environ.get("LLM_MAX_TOKENS")
     max_tokens = int(raw_max) if raw_max else None
     disable_thinking = os.environ.get("LLM_DISABLE_THINKING", "").lower() in ("1", "true", "yes")
-    # The three structured nodes must emit strict JSON; force JSON mode for them.
-    # The interview node writes free-form Markdown, so it must NOT use JSON mode.
     json_nodes = {NodeName.STRUCTURE_CV, NodeName.JD_RUBRIC, NodeName.SCREEN}
     return {
         node: OpenAICompatibleClient(
@@ -105,6 +109,21 @@ def _build_clients(config: AppConfig) -> dict:
         )
         for node in NodeName
     }
+
+
+def _cv_source(config: AppConfig):
+    if os.environ.get("CV_SOURCE", "local").lower() == "gdrive":
+        from cv_agent.sources import GoogleDriveSource
+
+        return GoogleDriveSource.from_env(os.environ)
+    return LocalFolderSource(config.cv_source_dir, "*.pdf")
+
+
+def _confirm(selector: str) -> bool:
+    return input(f"{selector} has not been screened. OCR + score it now? [y/N] ").strip().lower() in (
+        "y",
+        "yes",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,24 +141,27 @@ def main(argv: list[str] | None = None) -> int:
     from cv_agent.ocr import MarkerOcrEngine
 
     store = SqliteStore(config.store_path)
+    common = dict(
+        cv_source=_cv_source(config),
+        jd_source=jd_source,
+        store=store,
+        ocr=MarkerOcrEngine(force_ocr=True),
+        clients=_build_clients(config),
+        sink=LocalFolderSink(config.report_sink_dir),
+        notifier=NullNotifier(),
+        jd_id=jd_id,
+        cli_overrides=_overrides(args),
+        now=datetime.now(timezone.utc).isoformat(),
+    )
     try:
-        summary = run_screening(
-            cv_source=LocalFolderSource(config.cv_source_dir, "*.pdf"),
-            jd_source=jd_source,
-            store=store,
-            ocr=MarkerOcrEngine(force_ocr=True),
-            clients=_build_clients(config),
-            sink=LocalFolderSink(config.report_sink_dir),
-            notifier=NullNotifier(),
-            jd_id=jd_id,
-            cli_overrides=_overrides(args),
-            now=datetime.now(timezone.utc).isoformat(),
-            ocr_confidence_threshold=config.ocr_confidence_threshold,
-        )
+        if args.command == "screen":
+            summary = run_screen(**common, since=args.since, top_n=args.top)
+            print(render_screen_summary(summary))
+        else:  # interview
+            summary = run_interview(**common, selectors=_selectors(args), confirm=_confirm)
+            print(render_interview_summary(summary))
     finally:
         store.close()
-
-    print(render_summary(summary))
     return 0
 
 

@@ -26,11 +26,13 @@ class RunContext:
     interview_format: str
     output_language: str
     strictness: Strictness
-    reject_mode: RejectReportMode
     interview_meta_hash: str
     created_at: str
+    reject_mode: RejectReportMode = RejectReportMode.FULL
+    must_weight: float = 2.0    # rank-score weight for must-have requirements
+    nice_weight: float = 1.0    # rank-score weight for nice-to-have requirements
     prev_scorecard: str | None = None
-    force_pass: bool = False  # debug override: send rejected candidates to interview too
+    force_pass: bool = False
 
 
 @dataclass(frozen=True)

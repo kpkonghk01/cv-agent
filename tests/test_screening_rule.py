@@ -131,6 +131,10 @@ def test_rank_score_partial_counts_half():
     assert r.rank_score == 50.0
 
 
+def test_rank_score_empty_rubric_is_zero():
+    assert decide_verdict(Rubric(), []).rank_score == 0.0
+
+
 def test_rank_score_respects_custom_weights():
     rubric = _rubric(MUST_A, NICE_A)  # must_weight 3 + nice 1, total 4
     r = decide_verdict(

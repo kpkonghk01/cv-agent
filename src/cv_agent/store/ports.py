@@ -22,6 +22,8 @@ class ProfileCache(Protocol):
 
     def put_profile(self, cv_hash: str, profile: CandidateProfile) -> None: ...
 
+    def find_cv_by_name(self, name: str) -> tuple[str, ...]: ...
+
 
 @runtime_checkable
 class RubricCache(Protocol):

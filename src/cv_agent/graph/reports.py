@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from pydantic import BaseModel, ConfigDict
+
 from cv_agent.domain.candidate import CandidateProfile
 from cv_agent.domain.rubric import Rubric
 from cv_agent.domain.screening import ScreeningReport
@@ -61,3 +63,44 @@ def render_reject_report(
         body += ["", "## Requirement scores", render_scorecard(report, rubric)]
 
     return "\n".join(body) + "\n"
+
+
+class ShortlistEntry(BaseModel):
+    """One ranked candidate in a Phase-1 shortlist."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    cv_id: str
+    report: ScreeningReport
+
+
+def render_shortlist(
+    entries: tuple[ShortlistEntry, ...],
+    rubric: Rubric,
+    *,
+    jd_title: str,
+    since: str,
+    total_screened: int,
+) -> str:
+    """Markdown ranking list: a summary table + a per-candidate scorecard breakdown."""
+    lines = [
+        f"# Shortlist — {jd_title}",
+        "",
+        f"Screened {total_screened} CV(s) since {since} · top {len(entries)} by rank score.",
+        "",
+        "| # | 候選人 | 分數 | 檔案 |",
+        "| --- | --- | ---: | --- |",
+    ]
+    for i, e in enumerate(entries, 1):
+        lines.append(f"| {i} | {e.name} | {e.report.rank_score:g} | {e.cv_id} |")
+
+    lines += ["", "---", "", "## 分項明細"]
+    for i, e in enumerate(entries, 1):
+        lines += [
+            "",
+            f"### {i}. {e.name} — {e.report.rank_score:g}",
+            "",
+            render_scorecard(e.report, rubric),
+        ]
+    return "\n".join(lines) + "\n"

@@ -18,10 +18,15 @@ def screen(
     rubric: Rubric,
     *,
     strictness: Strictness = Strictness.LOOSE,
+    must_weight: float = 2.0,
+    nice_weight: float = 1.0,
     max_retries: int = 2,
 ) -> ScreeningReport:
     """Get evidence-based scores from the model, then apply the deterministic rule."""
     sheet = structured_call(
         client, ScoreSheet, screen_messages(profile, rubric), max_retries=max_retries
     )
-    return decide_verdict(rubric, sheet.scores, strictness=strictness)
+    return decide_verdict(
+        rubric, sheet.scores, strictness=strictness,
+        must_weight=must_weight, nice_weight=nice_weight,
+    )

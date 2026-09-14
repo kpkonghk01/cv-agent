@@ -15,7 +15,8 @@ class LocalFolderSource:
         self._dir = Path(directory)
         self._glob = glob
 
-    def list(self) -> tuple[DocumentRef, ...]:
+    def list(self, since: str | None = None) -> tuple[DocumentRef, ...]:
+        # A flat local folder has no date structure; `since` is ignored (dedup handles reruns).
         if not self._dir.is_dir():
             raise FileNotFoundError(f"source directory not found: {self._dir}")
         files = sorted(p for p in self._dir.glob(self._glob) if p.is_file())

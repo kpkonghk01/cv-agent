@@ -26,6 +26,8 @@ class ResolvedSettings(BaseModel):
     output_language: str
     strictness: Strictness
     reject_mode: RejectReportMode
+    must_weight: float
+    nice_weight: float
     interview_meta_hash: str
 
 
@@ -68,6 +70,8 @@ def resolve_settings(
     reject_mode = _parse_enum(
         RejectReportMode, str(cli.get("reject_mode", "full")), "reject_mode"
     )
+    must_weight = float(pick("must_weight", "must_weight", 2.0))
+    nice_weight = float(pick("nice_weight", "nice_weight", 1.0))
 
     meta_hash = interview_meta_hash(
         {
@@ -86,5 +90,7 @@ def resolve_settings(
         output_language=lang,
         strictness=strictness,
         reject_mode=reject_mode,
+        must_weight=must_weight,
+        nice_weight=nice_weight,
         interview_meta_hash=meta_hash,
     )

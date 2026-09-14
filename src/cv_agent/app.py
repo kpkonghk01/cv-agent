@@ -1,37 +1,50 @@
-"""Run orchestration: one JD × many CVs, sequential (v1), with per-candidate failure
-isolation and an end-of-run summary + notification.
+"""Two-phase run orchestration.
 
-Pure and testable: every adapter is injected. Real construction from AppConfig lives in
-cli.py (real IO, excluded from the coverage gate).
+Phase 1 ``run_screen``: OCR → structure → score every CV (since a date), rank, write ONE
+shortlist. Phase 2 ``run_interview``: for accepted candidates (by filename or name), reload
+the cached profile + screening and draft the interview brief — no re-OCR.
+
+Pure and testable: every adapter is injected. Real construction from AppConfig is in cli.py.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 import yaml
 from pydantic import BaseModel, ConfigDict
 
 from cv_agent.config import NodeName
-from cv_agent.graph.candidate_graph import build_candidate_graph
-from cv_agent.graph.context import PipelineDeps, RunContext
-from cv_agent.hashing import jd_hash
-from cv_agent.naming import slugify
+from cv_agent.graph import (
+    PipelineDeps,
+    RunContext,
+    ShortlistEntry,
+    interview_candidate,
+    render_shortlist,
+    screen_candidate,
+)
+from cv_agent.hashing import cv_hash, jd_hash
+from cv_agent.naming import shortlist_filename, slugify
 from cv_agent.nodes import jd_to_rubric
 from cv_agent.settings import ResolvedSettings, resolve_settings
 
 
-class RunSummary(BaseModel):
+class ScreenSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     total: int = 0
-    passed: int = 0
-    rejected: int = 0
-    skipped: int = 0
+    shortlisted: int = 0
     errors: int = 0
-    reject_summaries: tuple[str, ...] = ()
     error_summaries: tuple[str, ...] = ()
-    manual_review: tuple[str, ...] = ()
+    shortlist_path: str | None = None
+
+
+class InterviewSummary(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    generated: int = 0
+    briefs: tuple[str, ...] = ()
+    skipped: tuple[str, ...] = ()
 
 
 def _stem(jd_id: str) -> str:
@@ -39,7 +52,6 @@ def _stem(jd_id: str) -> str:
 
 
 def load_jd_meta(jd_source, jd_id: str) -> dict:
-    """Read the optional ``<stem>.meta.yaml`` sidecar; empty dict if absent."""
     try:
         raw = jd_source.read_text(f"{_stem(jd_id)}.meta.yaml")
     except FileNotFoundError:
@@ -58,7 +70,37 @@ def _build_rubric(store, clients, jd_text: str, jd_h: str, settings: ResolvedSet
     return rubric
 
 
-def run_screening(
+def _context(
+    jd_source, store, clients, jd_id: str, cli_overrides: Mapping[str, object], now: str
+) -> tuple[RunContext, ResolvedSettings]:
+    jd_text = jd_source.read_text(jd_id)
+    settings = resolve_settings(
+        load_jd_meta(jd_source, jd_id), cli_overrides, default_title=_stem(jd_id)
+    )
+    jd_h = jd_hash(jd_text)
+    rubric = _build_rubric(store, clients, jd_text, jd_h, settings)
+    ctx = RunContext(
+        rubric=rubric,
+        jd_hash=jd_h,
+        jd_slug=slugify(settings.title),
+        minutes=settings.minutes,
+        interview_format=settings.interview_format,
+        output_language=settings.output_language,
+        strictness=settings.strictness,
+        interview_meta_hash=settings.interview_meta_hash,
+        created_at=now,
+        reject_mode=settings.reject_mode,
+        must_weight=settings.must_weight,
+        nice_weight=settings.nice_weight,
+        prev_scorecard=cli_overrides.get("prev_scorecard"),
+    )
+    return ctx, settings
+
+
+# --- Phase 1: screen -> shortlist ----------------------------------------
+
+
+def run_screen(
     *,
     cv_source,
     jd_source,
@@ -70,96 +112,123 @@ def run_screening(
     jd_id: str,
     cli_overrides: Mapping[str, object],
     now: str,
-    ocr_confidence_threshold: float = 0.6,
-) -> RunSummary:
-    jd_text = jd_source.read_text(jd_id)
-    settings = resolve_settings(load_jd_meta(jd_source, jd_id), cli_overrides, default_title=_stem(jd_id))
-    jd_h = jd_hash(jd_text)
-    rubric = _build_rubric(store, clients, jd_text, jd_h, settings)
-
-    ctx = RunContext(
-        rubric=rubric,
-        jd_hash=jd_h,
-        jd_slug=slugify(settings.title),
-        minutes=settings.minutes,
-        interview_format=settings.interview_format,
-        output_language=settings.output_language,
-        strictness=settings.strictness,
-        reject_mode=settings.reject_mode,
-        interview_meta_hash=settings.interview_meta_hash,
-        created_at=now,
-        prev_scorecard=cli_overrides.get("prev_scorecard"),
-        force_pass=bool(cli_overrides.get("force_pass")),
-    )
+    since: str | None = None,
+    top_n: int | None = None,
+) -> ScreenSummary:
+    ctx, settings = _context(jd_source, store, clients, jd_id, cli_overrides, now)
     deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
-    graph = build_candidate_graph(deps, ctx)
 
-    acc = _Accumulator(threshold=ocr_confidence_threshold)
-    for ref in cv_source.list():
-        acc.total += 1
+    entries: list[ShortlistEntry] = []
+    errors: list[str] = []
+    for ref in cv_source.list(since):
         try:
-            state = graph.invoke({"cv_id": ref.id, "cv_bytes": cv_source.read_bytes(ref.id)})
-        except Exception as err:  # per-candidate isolation — never block the batch
-            acc.error(ref.id, err)
+            digest, profile, report = screen_candidate(
+                deps, ctx, ref.id, cv_source.read_bytes(ref.id)
+            )
+        except Exception as err:  # per-candidate isolation
+            errors.append(f"{ref.id}: {err}")
             continue
-        acc.record(ref.id, state)
+        entries.append(ShortlistEntry(name=profile.name or ref.id, cv_id=ref.id, report=report))
 
-    summary = acc.summary()
-    notifier.notify(render_summary(summary))
+    entries.sort(key=lambda e: e.report.rank_score, reverse=True)
+    top = tuple(entries[:top_n]) if top_n else tuple(entries)
+    label = since or "all"
+    content = render_shortlist(
+        top, ctx.rubric, jd_title=settings.title, since=label, total_screened=len(entries)
+    )
+    path = sink.write(shortlist_filename(ctx.jd_slug, label), content)
+
+    summary = ScreenSummary(
+        total=len(entries),
+        shortlisted=len(top),
+        errors=len(errors),
+        error_summaries=tuple(errors),
+        shortlist_path=path,
+    )
+    notifier.notify(render_screen_summary(summary))
     return summary
 
 
-class _Accumulator:
-    def __init__(self, *, threshold: float) -> None:
-        self.threshold = threshold
-        self.total = self.passed = self.rejected = self.skipped = self.errors = 0
-        self.rejects: list[str] = []
-        self.error_list: list[str] = []
-        self.manual: list[str] = []
-
-    def error(self, cv_id: str, err: Exception) -> None:
-        self.errors += 1
-        self.error_list.append(f"{cv_id}: {err}")
-
-    def record(self, cv_id: str, state: dict) -> None:
-        if state.get("skipped"):
-            self.skipped += 1
-            return
-        who = state.get("soft_name") or cv_id
-        profile = state.get("profile")
-        if profile is not None and profile.ocr_confidence is not None:
-            if profile.ocr_confidence < self.threshold:
-                self.manual.append(who)
-        if state.get("verdict") == "pass":
-            self.passed += 1
-        else:
-            self.rejected += 1
-            reasons = "; ".join(state.get("reasons", ())) or "no reason recorded"
-            self.rejects.append(f"{who}: {reasons}")
-
-    def summary(self) -> RunSummary:
-        return RunSummary(
-            total=self.total,
-            passed=self.passed,
-            rejected=self.rejected,
-            skipped=self.skipped,
-            errors=self.errors,
-            reject_summaries=tuple(self.rejects),
-            error_summaries=tuple(self.error_list),
-            manual_review=tuple(self.manual),
-        )
+# --- Phase 2: interview accepted candidates ------------------------------
 
 
-def render_summary(s: RunSummary) -> str:
+def run_interview(
+    *,
+    cv_source,
+    jd_source,
+    store,
+    ocr,
+    clients,
+    sink,
+    notifier,
+    jd_id: str,
+    selectors: Sequence[str],
+    cli_overrides: Mapping[str, object],
+    now: str,
+    confirm: Callable[[str], bool],
+) -> InterviewSummary:
+    ctx, _ = _context(jd_source, store, clients, jd_id, cli_overrides, now)
+    deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
+    by_filename = {ref.id: ref for ref in cv_source.list(None)}
+
+    briefs: list[str] = []
+    skipped: list[str] = []
+    for sel in selectors:
+        resolved = _resolve(deps, ctx, sel, cv_source, by_filename, confirm, skipped)
+        if resolved is None:
+            continue
+        digest, profile, report = resolved
+        briefs.append(interview_candidate(deps, ctx, digest, profile, report))
+
+    summary = InterviewSummary(generated=len(briefs), briefs=tuple(briefs), skipped=tuple(skipped))
+    notifier.notify(render_interview_summary(summary))
+    return summary
+
+
+def _resolve(deps, ctx, sel, cv_source, by_filename, confirm, skipped):
+    """Resolve a selector (filename or name) to (cv_hash, profile, report), or None."""
+    if sel in by_filename:  # filename → deterministic
+        digest = cv_hash(cv_source.read_bytes(sel))
+        profile = deps.store.get_profile(digest)
+        report = deps.store.get_screening(digest, ctx.jd_hash)
+        if profile is not None and report is not None:
+            return digest, profile, report
+        if confirm(sel):  # not screened yet → OCR + score on demand
+            return screen_candidate(deps, ctx, sel, cv_source.read_bytes(sel))
+        skipped.append(f"{sel}: not screened, declined")
+        return None
+
+    # name → match stored profile names for this JD's screening
+    screened = [h for h in deps.store.find_cv_by_name(sel)
+                if deps.store.get_screening(h, ctx.jd_hash) is not None]
+    if len(screened) == 1:
+        h = screened[0]
+        return h, deps.store.get_profile(h), deps.store.get_screening(h, ctx.jd_hash)
+    reason = "no screened candidate by that name (use the CV filename)" if not screened \
+        else f"{len(screened)} candidates match that name (use the CV filename)"
+    skipped.append(f"{sel}: {reason}")
+    return None
+
+
+# --- Summary rendering ----------------------------------------------------
+
+
+def render_screen_summary(s: ScreenSummary) -> str:
     lines = [
-        "=== cv-agent run summary ===",
-        f"total={s.total} pass={s.passed} reject={s.rejected} skip={s.skipped} error={s.errors}",
+        "=== screen summary ===",
+        f"screened={s.total} shortlisted={s.shortlisted} errors={s.errors}",
+        f"shortlist: {s.shortlist_path}",
     ]
-    if s.reject_summaries:
-        lines += ["", "Rejected:", *(f"  - {r}" for r in s.reject_summaries)]
-    if s.manual_review:
-        lines += ["", "Manual review (low OCR confidence):", *(f"  - {m}" for m in s.manual_review)]
     if s.error_summaries:
-        lines += ["", "Errors (not marked processed; will retry next run):",
+        lines += ["", "Errors (not scored; will retry next run):",
                   *(f"  - {e}" for e in s.error_summaries)]
+    return "\n".join(lines)
+
+
+def render_interview_summary(s: InterviewSummary) -> str:
+    lines = ["=== interview summary ===", f"briefs={s.generated} skipped={len(s.skipped)}"]
+    if s.briefs:
+        lines += ["", "Written:", *(f"  - {p}" for p in s.briefs)]
+    if s.skipped:
+        lines += ["", "Skipped:", *(f"  - {x}" for x in s.skipped)]
     return "\n".join(lines)

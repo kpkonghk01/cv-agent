@@ -12,7 +12,13 @@ from cv_agent.domain import (
     ScreeningReport,
     Verdict,
 )
-from cv_agent.graph import RejectReportMode, render_reject_report, render_scorecard
+from cv_agent.graph import (
+    RejectReportMode,
+    ShortlistEntry,
+    render_reject_report,
+    render_scorecard,
+    render_shortlist,
+)
 
 
 def _report():
@@ -64,6 +70,25 @@ def test_scorecard_shows_text_kind_level_and_evidence():
 
 def test_scorecard_falls_back_to_id_without_rubric():
     assert "`r1`" in render_scorecard(_report(), None)
+
+
+def test_shortlist_ranks_and_shows_scores():
+    rubric = Rubric(
+        requirements=(Requirement(id="r1", text="Go", kind=RequirementKind.MUST_HAVE),)
+    )
+    top = ScreeningReport(
+        rank_score=80.0,
+        scores=(RequirementScore(requirement_id="r1", level=ScoreLevel.MET),),
+    )
+    low = ScreeningReport(rank_score=40.0)
+    out = render_shortlist(
+        (ShortlistEntry(name="Alice", cv_id="a.pdf", report=top),
+         ShortlistEntry(name="Bob", cv_id="b.pdf", report=low)),
+        rubric, jd_title="Eng", since="20260818", total_screened=5,
+    )
+    assert "Shortlist — Eng" in out
+    assert "80" in out and "40" in out
+    assert out.index("Alice") < out.index("Bob")  # ranked order preserved
 
 
 def test_missing_name_falls_back():

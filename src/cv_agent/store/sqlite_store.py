@@ -55,6 +55,15 @@ class SqliteStore:
             (cv_hash, profile.model_dump_json()),
         )
 
+    def find_cv_by_name(self, name: str) -> tuple[str, ...]:
+        """cv_hashes whose profile name contains ``name`` (case-insensitive)."""
+        cur = self._conn.execute(
+            "SELECT cv_hash FROM profiles "
+            "WHERE lower(json_extract(json, '$.name')) LIKE '%' || lower(?) || '%'",
+            (name,),
+        )
+        return tuple(row[0] for row in cur.fetchall())
+
     # --- RubricCache ------------------------------------------------------
 
     def get_rubric(self, jd_hash: str) -> Rubric | None:

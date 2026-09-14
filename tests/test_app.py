@@ -1,4 +1,4 @@
-"""run_screening orchestration: routing, skip, failure isolation, summary, notifier."""
+"""run_screen (Phase 1 shortlist) and run_interview (Phase 2 briefs) orchestration."""
 
 from __future__ import annotations
 
@@ -6,31 +6,28 @@ from pathlib import Path
 
 import pytest
 
-from cv_agent.app import run_screening
-from cv_agent.domain import CandidateStatus, Verdict
+from cv_agent.app import run_interview, run_screen
+from cv_agent.domain import CandidateProfile, ScreeningReport, Verdict
 from cv_agent.graph import uniform_clients
 from cv_agent.hashing import cv_hash, jd_hash
 from cv_agent.ocr import OcrResult
 from cv_agent.sinks import LocalFolderSink
 from cv_agent.sources import DocumentRef
-from cv_agent.store import ProcessedRecord, SqliteStore
+from cv_agent.store import SqliteStore
 
 JD_TEXT = "We need Go. Must have Go."
+JDH = jd_hash(JD_TEXT)
 RUBRIC = '{"role_archetype": "technical", "requirements": [{"id": "x", "text": "Go", "kind": "must_have"}]}'
 PROFILE = '{"name": "Alice", "skills": ["Go"]}'
 PASS = '{"scores": [{"requirement_id": "r1", "level": "met"}]}'
-REJECT = '{"scores": [{"requirement_id": "r1", "level": "unmet"}]}'
+UNMET = '{"scores": [{"requirement_id": "r1", "level": "unmet"}]}'
+BRIEF = "# Interview Brief"
 
 
 class FakeJd:
-    def __init__(self, meta_text=None):
-        self.meta_text = meta_text
-
     def read_text(self, doc_id):
         if doc_id.endswith(".meta.yaml"):
-            if self.meta_text is None:
-                raise FileNotFoundError(doc_id)
-            return self.meta_text
+            raise FileNotFoundError(doc_id)
         return JD_TEXT
 
 
@@ -39,7 +36,7 @@ class FakeCv:
         self._items = items
         self._raise_on = set(raise_on)
 
-    def list(self):
+    def list(self, since=None):
         return tuple(DocumentRef(id=k) for k in sorted(self._items))
 
     def read_bytes(self, doc_id):
@@ -48,16 +45,24 @@ class FakeCv:
         return self._items[doc_id]
 
 
+class FakeJdMeta(FakeJd):
+    def read_text(self, doc_id):
+        if doc_id.endswith(".meta.yaml"):
+            return "role_archetype: management"
+        return JD_TEXT
+
+
 class FakeOcr:
-    def __init__(self, confidence=None):
-        self.confidence = confidence
+    def __init__(self):
+        self.calls = 0
 
     def to_markdown(self, pdf_bytes):
-        return OcrResult(markdown="# CV", confidence=self.confidence)
+        self.calls += 1
+        return OcrResult(markdown="# CV")
 
 
 class ScriptedClient:
-    def __init__(self, sheets):
+    def __init__(self, sheets=()):
         self._sheets = list(sheets)
 
     def complete(self, messages):
@@ -68,7 +73,7 @@ class ScriptedClient:
             return PROFILE
         if "score a candidate" in system:
             return self._sheets.pop(0)
-        return "# Interview Brief"
+        return BRIEF
 
 
 class FakeNotifier:
@@ -86,96 +91,123 @@ def store():
     s.close()
 
 
-def _run(store, tmp_path, cv_source, client, notifier, ocr=None, cli=None):
-    return run_screening(
+def _common(store, tmp_path, cv_source, client):
+    return dict(
         cv_source=cv_source,
         jd_source=FakeJd(),
         store=store,
-        ocr=ocr or FakeOcr(),
-        clients=uniform_clients(client),
-        sink=LocalFolderSink(str(tmp_path)),
-        notifier=notifier,
-        jd_id="eng.md",
-        cli_overrides=cli or {},
-        now="2026-08-17T00:00:00Z",
-    )
-
-
-def test_mixed_pass_and_reject(store, tmp_path):
-    notifier = FakeNotifier()
-    summary = _run(
-        store, tmp_path,
-        FakeCv({"a.pdf": b"AAA", "b.pdf": b"BBB"}),
-        ScriptedClient([PASS, REJECT]),
-        notifier,
-    )
-    assert (summary.total, summary.passed, summary.rejected) == (2, 1, 1)
-    names = sorted(p.name.split("__")[0] for p in Path(tmp_path).glob("*.md"))
-    assert names == ["pass", "reject"]
-    assert len(notifier.messages) == 1  # one notification per run
-    assert store.get_rubric(jd_hash(JD_TEXT)) is not None  # rubric cached
-
-
-def test_already_processed_is_skipped(store, tmp_path):
-    store.mark_processed(
-        ProcessedRecord(cv_hash=cv_hash(b"AAA"), jd_hash=jd_hash(JD_TEXT),
-                        verdict=Verdict.PASS, status=CandidateStatus.OK, created_at="old")
-    )
-    summary = _run(
-        store, tmp_path,
-        FakeCv({"a.pdf": b"AAA", "b.pdf": b"BBB"}),
-        ScriptedClient([PASS]),  # only b.pdf reaches screen
-        FakeNotifier(),
-    )
-    assert summary.skipped == 1
-    assert summary.passed == 1
-
-
-def test_failure_isolation_continues_and_does_not_persist_error(store, tmp_path):
-    summary = _run(
-        store, tmp_path,
-        FakeCv({"a.pdf": b"AAA", "bad.pdf": b"X"}, raise_on={"bad.pdf"}),
-        ScriptedClient([PASS]),  # only a.pdf reaches screen
-        FakeNotifier(),
-    )
-    assert summary.errors == 1
-    assert summary.passed == 1
-    assert any("bad.pdf" in e for e in summary.error_summaries)
-    # errored CV is NOT marked processed => it will retry next run
-    assert store.is_processed(cv_hash(b"X"), jd_hash(JD_TEXT)) is False
-
-
-def _run_with_jd(store, tmp_path, jd_source):
-    return run_screening(
-        cv_source=FakeCv({"a.pdf": b"AAA"}),
-        jd_source=jd_source,
-        store=store,
         ocr=FakeOcr(),
-        clients=uniform_clients(ScriptedClient([PASS])),
+        clients=uniform_clients(client),
         sink=LocalFolderSink(str(tmp_path)),
         notifier=FakeNotifier(),
         jd_id="eng.md",
         cli_overrides={},
-        now="2026-08-17T00:00:00Z",
+        now="2026-09-14T00:00:00Z",
     )
 
 
-def test_meta_yaml_role_override_is_applied(store, tmp_path):
-    summary = _run_with_jd(store, tmp_path, FakeJd(meta_text="role_archetype: management"))
-    assert summary.passed == 1  # meta parsed + role override path exercised
+# --- Phase 1 --------------------------------------------------------------
 
 
-def test_non_dict_meta_is_ignored(store, tmp_path):
-    summary = _run_with_jd(store, tmp_path, FakeJd(meta_text="just a scalar, not a mapping"))
-    assert summary.passed == 1
+def test_screen_ranks_and_writes_one_shortlist(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA", "b.pdf": b"BBB"})
+    summary = run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS, UNMET])), top_n=None)
+    assert summary.total == 2
+    assert summary.shortlisted == 2
+    files = [p.name for p in Path(tmp_path).glob("*.md")]
+    assert files == ["shortlist__eng__all.md"]  # exactly one shortlist
+    body = Path(tmp_path, "shortlist__eng__all.md").read_text(encoding="utf-8")
+    # a.pdf (met -> 100) ranks above b.pdf (unmet -> 0)
+    assert body.index("a.pdf") < body.index("b.pdf")
 
 
-def test_low_ocr_confidence_flags_manual_review(store, tmp_path):
-    summary = _run(
-        store, tmp_path,
-        FakeCv({"a.pdf": b"AAA"}),
-        ScriptedClient([PASS]),
-        FakeNotifier(),
-        ocr=FakeOcr(confidence=0.3),
-    )
-    assert summary.manual_review == ("Alice",)
+def test_screen_top_n_truncates(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA", "b.pdf": b"BBB"})
+    summary = run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS, UNMET])), top_n=1)
+    assert summary.shortlisted == 1
+
+
+def test_screen_persists_profile_and_screening(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA"})
+    run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS])))
+    h = cv_hash(b"AAA")
+    assert store.get_profile(h) is not None
+    assert store.get_screening(h, JDH).rank_score == 100.0
+
+
+def test_screen_isolates_per_candidate_failures(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA", "bad.pdf": b"X"}, raise_on={"bad.pdf"})
+    summary = run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS])))
+    assert summary.total == 1 and summary.errors == 1
+    assert any("bad.pdf" in e for e in summary.error_summaries)
+
+
+def test_screen_applies_meta_role_override(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA"})
+    common = _common(store, tmp_path, cv, ScriptedClient([PASS]))
+    common["jd_source"] = FakeJdMeta()
+    summary = run_screen(**common)
+    assert summary.total == 1  # meta parsed + role override path exercised
+
+
+# --- Phase 2 --------------------------------------------------------------
+
+
+def _seed(store, cv_bytes=b"AAA", name="Alice"):
+    """Pre-populate as if Phase 1 already screened this candidate."""
+    from cv_agent.domain import Requirement, RequirementKind, Rubric
+
+    h = cv_hash(cv_bytes)
+    store.put_rubric(JDH, Rubric(requirements=(Requirement(id="r1", text="Go", kind=RequirementKind.MUST_HAVE),)))
+    store.put_profile(h, CandidateProfile(name=name))
+    store.put_screening(h, JDH, ScreeningReport(verdict=Verdict.PASS, rank_score=90.0))
+    return h
+
+
+def test_interview_by_filename_from_cache(store, tmp_path):
+    _seed(store)
+    cv = FakeCv({"a.pdf": b"AAA"})
+    common = _common(store, tmp_path, cv, ScriptedClient())
+    summary = run_interview(**common, selectors=["a.pdf"], confirm=lambda s: False)
+    assert summary.generated == 1
+    assert common["ocr"].calls == 0  # reused cache, no re-OCR
+    assert Path(summary.briefs[0]).name.startswith("pass__")
+
+
+def test_interview_by_name_from_cache(store, tmp_path):
+    _seed(store, name="Alice")
+    cv = FakeCv({"a.pdf": b"AAA"})
+    summary = run_interview(**_common(store, tmp_path, cv, ScriptedClient()),
+                            selectors=["Alice"], confirm=lambda s: False)
+    assert summary.generated == 1
+
+
+def test_interview_unscreened_filename_confirm_triggers_ocr(store, tmp_path):
+    from cv_agent.domain import Requirement, RequirementKind, Rubric
+
+    store.put_rubric(JDH, Rubric(requirements=(Requirement(id="r1", text="Go", kind=RequirementKind.MUST_HAVE),)))
+    cv = FakeCv({"new.pdf": b"NEW"})
+    common = _common(store, tmp_path, cv, ScriptedClient([PASS]))
+    summary = run_interview(**common, selectors=["new.pdf"], confirm=lambda s: True)
+    assert summary.generated == 1
+    assert common["ocr"].calls == 1  # confirmed → OCR on demand
+
+
+def test_interview_unscreened_declined_is_skipped(store, tmp_path):
+    from cv_agent.domain import Requirement, RequirementKind, Rubric
+
+    store.put_rubric(JDH, Rubric(requirements=(Requirement(id="r1", text="Go", kind=RequirementKind.MUST_HAVE),)))
+    cv = FakeCv({"new.pdf": b"NEW"})
+    summary = run_interview(**_common(store, tmp_path, cv, ScriptedClient()),
+                            selectors=["new.pdf"], confirm=lambda s: False)
+    assert summary.generated == 0
+    assert any("declined" in s for s in summary.skipped)
+
+
+def test_interview_unknown_name_is_skipped(store, tmp_path):
+    _seed(store, name="Alice")
+    cv = FakeCv({"a.pdf": b"AAA"})
+    summary = run_interview(**_common(store, tmp_path, cv, ScriptedClient()),
+                            selectors=["Bob"], confirm=lambda s: False)
+    assert summary.generated == 0
+    assert any("Bob" in s for s in summary.skipped)

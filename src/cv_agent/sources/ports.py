@@ -26,7 +26,10 @@ class DocumentRef(BaseModel):
 
 @runtime_checkable
 class Source(Protocol):
-    def list(self) -> tuple[DocumentRef, ...]: ...
+    def list(self, since: str | None = None) -> tuple[DocumentRef, ...]:
+        """List documents. ``since`` (e.g. a ``YYYYMMDD`` date) filters by the backend's
+        convention — date-named subfolders on Drive; ignored by a flat local folder."""
+        ...
 
     def read_bytes(self, doc_id: str) -> bytes: ...
 
