@@ -139,7 +139,10 @@ uv run cv-agent interview [--jd FILE] --from-file accepted.txt [--round 2] [--pr
 ```
 
 `screen` options: `--since` (only CVs in date-folders ≥ this — Drive only; local lists all),
-`--top N` (keep the top N). `interview` selectors resolve by **CV filename** (exact; if not yet
+`--top N` (keep the top N), `--limit N` (cap how many CVs to OCR+score), `--concurrency N`
+(parallel CVs; LLM/download overlap, OCR is serialised — default `MAX_CONCURRENCY`). Already-screened
+CVs are loaded from cache (no download / OCR / LLM), so batch/incremental re-runs are cheap.
+`interview` selectors resolve by **CV filename** (exact; if not yet
 screened you're prompted to OCR it on demand) or **candidate name** (matches a screened profile).
 
 ### Outputs
