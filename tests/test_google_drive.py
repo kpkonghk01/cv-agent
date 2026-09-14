@@ -46,15 +46,21 @@ def _source():
             {"id": "f1", "name": "20260817", "mime": FOLDER},
             {"id": "f2", "name": "20260818", "mime": FOLDER},
         ],
-        "f1": [{"id": "p1", "name": "old.pdf", "mime": PDF}],
+        # deliberately out of name order to prove list() sorts them
+        "f1": [{"id": "p1", "name": "b.pdf", "mime": PDF}, {"id": "p0", "name": "a.pdf", "mime": PDF}],
         "f2": [{"id": "p2", "name": "new.pdf", "mime": PDF}],
     }
-    return GoogleDriveSource(FakeDriveService(tree, {"p1": b"OLD", "p2": b"NEW"}), "root")
+    return GoogleDriveSource(
+        FakeDriveService(tree, {"p0": b"A", "p1": b"B", "p2": b"NEW"}), "root"
+    )
 
 
-def test_list_traverses_date_folders_sorted():
+def test_list_traverses_date_folders_and_sorts_pdfs_by_name():
     refs = _source().list()
-    assert [(r.id, r.name) for r in refs] == [("p1", "old.pdf"), ("p2", "new.pdf")]
+    # folders sorted (f1 before f2); PDFs within a folder sorted (a.pdf before b.pdf)
+    assert [(r.id, r.name) for r in refs] == [
+        ("p0", "a.pdf"), ("p1", "b.pdf"), ("p2", "new.pdf")
+    ]
 
 
 def test_list_since_keeps_only_newer_date_folders():
@@ -65,4 +71,4 @@ def test_list_since_keeps_only_newer_date_folders():
 def test_read_bytes_and_text_by_file_id():
     src = _source()
     assert src.read_bytes("p2") == b"NEW"
-    assert src.read_text("p1") == "OLD"
+    assert src.read_text("p0") == "A"

@@ -58,7 +58,9 @@ class GoogleDriveSource:
             folders = [f for f in folders if f["name"] >= since]
         refs: list[DocumentRef] = []
         for folder in sorted(folders, key=lambda f: f["name"]):
-            for pdf in self._children(folder["id"], _PDF_MIME):
+            # Sort PDFs by name too — Drive's native order is unstable, which would make
+            # --limit pick a different subset each run.
+            for pdf in sorted(self._children(folder["id"], _PDF_MIME), key=lambda p: p["name"]):
                 refs.append(DocumentRef(id=pdf["id"], name=pdf["name"]))
         return tuple(refs)
 
