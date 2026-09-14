@@ -56,5 +56,15 @@ class ScreeningCache(Protocol):
 
 
 @runtime_checkable
-class Store(ProfileCache, RubricCache, ProcessedRegistry, ScreeningCache, Protocol):
+class SourceIndex(Protocol):
+    """Maps a source id (Drive file id / filename) to its ``cv_hash`` so an already-seen
+    file can be recognised without re-downloading it to recompute the hash."""
+
+    def get_cv_hash(self, source_id: str) -> str | None: ...
+
+    def put_cv_hash(self, source_id: str, cv_hash: str) -> None: ...
+
+
+@runtime_checkable
+class Store(ProfileCache, RubricCache, ProcessedRegistry, ScreeningCache, SourceIndex, Protocol):
     """A backend that provides every cache (the SQLite store does)."""

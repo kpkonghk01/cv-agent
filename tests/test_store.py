@@ -164,6 +164,15 @@ def test_forget_screening_scoped(store):
     assert store.forget_screening("cv1") == 1  # remaining
 
 
+def test_source_index_round_trip_and_forget(store):
+    assert store.get_cv_hash("file123") is None
+    store.put_cv_hash("file123", "cvhashabc")
+    store.put_cv_hash("file456", "cvhashabc")
+    assert store.get_cv_hash("file123") == "cvhashabc"
+    assert store.forget_source_index("cvhashabc") == 2  # both ids for that hash
+    assert store.get_cv_hash("file123") is None
+
+
 def test_data_persists_across_instances(tmp_path):
     db = str(tmp_path / "s.sqlite")
     with SqliteStore(db) as s:

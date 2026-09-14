@@ -129,18 +129,13 @@ def run_screen(
     total = len(refs)
     progress(f"screening {total} CV(s)…")
     for i, ref in enumerate(refs, 1):
-        # ref.name is the human filename (candidate hint + display); ref.id reads bytes
-        # (== filename locally, an opaque file id on Drive).
         progress(f"[{i}/{total}] {ref.name}")
         try:
-            digest, profile, report = screen_candidate(
-                deps, ctx, ref.name, cv_source.read_bytes(ref.id)
-            )
+            profile, report = _screen_ref(deps, ctx, ref, cv_source, progress)
         except Exception as err:  # per-candidate isolation
             progress(f"    ✗ error: {err}")
             errors.append(f"{ref.name}: {err}")
             continue
-        progress(f"    → {report.rank_score:g} ({report.verdict.value})")
         entries.append(
             ShortlistEntry(name=profile.name or ref.name, cv_id=ref.name, report=report)
         )
@@ -163,6 +158,23 @@ def run_screen(
     )
     notifier.notify(render_screen_summary(summary))
     return summary
+
+
+def _screen_ref(deps, ctx, ref, cv_source, progress):
+    """Screen one source ref. If the file id is a known, fully-cached CV, load it without
+    downloading; otherwise download, screen, and remember file id → cv_hash. Returns
+    (profile, report)."""
+    known = deps.store.get_cv_hash(ref.id)
+    if known is not None:
+        report = deps.store.get_screening(known, ctx.jd_hash)
+        profile = deps.store.get_profile(known)
+        if report is not None and profile is not None:
+            progress(f"    → cached {report.rank_score:g} (skipped download)")
+            return profile, report
+    digest, profile, report = screen_candidate(deps, ctx, ref.name, cv_source.read_bytes(ref.id))
+    deps.store.put_cv_hash(ref.id, digest)
+    progress(f"    → {report.rank_score:g} ({report.verdict.value})")
+    return profile, report
 
 
 # --- Phase 2: interview accepted candidates ------------------------------

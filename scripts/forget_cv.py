@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             profiles = store.forget_profile(cv_h)
             judged = store.forget_processed(cv_h) + store.forget_screening(cv_h)
+            store.forget_source_index(cv_h)
             print(
                 f"Cleared profile ({profiles}) + {judged} judgment/screening row(s) for CV "
                 f"{cv_h[:8]}. It will be fully re-analysed on the next run."

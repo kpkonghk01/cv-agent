@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS screenings (
     json    TEXT NOT NULL,
     PRIMARY KEY (cv_hash, jd_hash)
 );
+CREATE TABLE IF NOT EXISTS source_index (
+    source_id TEXT PRIMARY KEY,   -- Drive file id / filename
+    cv_hash   TEXT NOT NULL
+);
 """
 
 
@@ -110,6 +114,17 @@ class SqliteStore:
             (cv_hash, jd_hash, report.model_dump_json()),
         )
 
+    # --- SourceIndex (source id -> cv_hash, to skip re-downloading) --------
+
+    def get_cv_hash(self, source_id: str) -> str | None:
+        return self._fetch("SELECT cv_hash FROM source_index WHERE source_id = ?", (source_id,))
+
+    def put_cv_hash(self, source_id: str, cv_hash: str) -> None:
+        self._upsert(
+            "INSERT OR REPLACE INTO source_index (source_id, cv_hash) VALUES (?, ?)",
+            (source_id, cv_hash),
+        )
+
     # --- Forget (maintenance: force re-analysis of a CV) ------------------
 
     def forget_profile(self, cv_hash: str) -> int:
@@ -131,6 +146,10 @@ class SqliteStore:
         return self._delete(
             "DELETE FROM screenings WHERE cv_hash = ? AND jd_hash = ?", (cv_hash, jd_hash)
         )
+
+    def forget_source_index(self, cv_hash: str) -> int:
+        """Drop source-id → cv_hash mappings for a CV (so it is re-downloaded next run)."""
+        return self._delete("DELETE FROM source_index WHERE cv_hash = ?", (cv_hash,))
 
     # --- Internals & lifecycle -------------------------------------------
 

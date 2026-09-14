@@ -40,6 +40,8 @@ class FakeCv:
         return tuple(DocumentRef(id=k) for k in sorted(self._items))
 
     def read_bytes(self, doc_id):
+        self.reads = getattr(self, "reads", [])
+        self.reads.append(doc_id)
         if doc_id in self._raise_on:
             raise OSError("unreadable CV")
         return self._items[doc_id]
@@ -131,6 +133,27 @@ def test_screen_limit_caps_how_many_are_scored(store, tmp_path):
     cv = FakeCv({"a.pdf": b"AAA", "b.pdf": b"BBB", "c.pdf": b"CCC"})
     summary = run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS])), limit=1)
     assert summary.total == 1  # only the first CV was OCR'd + scored
+
+
+def test_screen_skips_download_for_indexed_cached_cv(store, tmp_path):
+    from cv_agent.domain import Requirement, RequirementKind, Rubric
+
+    h = cv_hash(b"AAA")
+    store.put_rubric(JDH, Rubric(requirements=(Requirement(id="r1", text="Go", kind=RequirementKind.MUST_HAVE),)))
+    store.put_profile(h, CandidateProfile(name="Alice"))
+    store.put_screening(h, JDH, ScreeningReport(verdict=Verdict.PASS, rank_score=88.0))
+    store.put_cv_hash("a.pdf", h)  # known file id → cv_hash
+    cv = FakeCv({"a.pdf": b"AAA"})
+    summary = run_screen(**_common(store, tmp_path, cv, ScriptedClient()))
+    assert summary.total == 1
+    assert getattr(cv, "reads", []) == []  # never downloaded — recognised from the index
+
+
+def test_screen_records_source_index_after_first_download(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA"})
+    run_screen(**_common(store, tmp_path, cv, ScriptedClient([PASS])))
+    assert cv.reads == ["a.pdf"]                       # downloaded once
+    assert store.get_cv_hash("a.pdf") == cv_hash(b"AAA")  # remembered for next time
 
 
 def test_screen_persists_profile_and_screening(store, tmp_path):

@@ -7,6 +7,7 @@ from cv_agent.store.ports import (
     ProfileCache,
     RubricCache,
     ScreeningCache,
+    SourceIndex,
     Store,
 )
 from cv_agent.store.records import ProcessedRecord
@@ -17,6 +18,7 @@ __all__ = [
     "ProfileCache",
     "RubricCache",
     "ScreeningCache",
+    "SourceIndex",
     "Store",
     "ProcessedRecord",
     "SqliteStore",
