@@ -121,14 +121,18 @@ def run_screen(
     entries: list[ShortlistEntry] = []
     errors: list[str] = []
     for ref in cv_source.list(since):
+        # ref.name is the human filename (candidate hint + display); ref.id reads bytes
+        # (== filename locally, an opaque file id on Drive).
         try:
             digest, profile, report = screen_candidate(
-                deps, ctx, ref.id, cv_source.read_bytes(ref.id)
+                deps, ctx, ref.name, cv_source.read_bytes(ref.id)
             )
         except Exception as err:  # per-candidate isolation
-            errors.append(f"{ref.id}: {err}")
+            errors.append(f"{ref.name}: {err}")
             continue
-        entries.append(ShortlistEntry(name=profile.name or ref.id, cv_id=ref.id, report=report))
+        entries.append(
+            ShortlistEntry(name=profile.name or ref.name, cv_id=ref.name, report=report)
+        )
 
     entries.sort(key=lambda e: e.report.rank_score, reverse=True)
     top = tuple(entries[:top_n]) if top_n else tuple(entries)
@@ -169,7 +173,7 @@ def run_interview(
 ) -> InterviewSummary:
     ctx, _ = _context(jd_source, store, clients, jd_id, cli_overrides, now)
     deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
-    by_filename = {ref.id: ref for ref in cv_source.list(None)}
+    by_filename = {ref.name: ref for ref in cv_source.list(None)}
 
     briefs: list[str] = []
     skipped: list[str] = []
@@ -188,13 +192,14 @@ def run_interview(
 def _resolve(deps, ctx, sel, cv_source, by_filename, confirm, skipped):
     """Resolve a selector (filename or name) to (cv_hash, profile, report), or None."""
     if sel in by_filename:  # filename → deterministic
-        digest = cv_hash(cv_source.read_bytes(sel))
+        ref = by_filename[sel]
+        digest = cv_hash(cv_source.read_bytes(ref.id))
         profile = deps.store.get_profile(digest)
         report = deps.store.get_screening(digest, ctx.jd_hash)
         if profile is not None and report is not None:
             return digest, profile, report
         if confirm(sel):  # not screened yet → OCR + score on demand
-            return screen_candidate(deps, ctx, sel, cv_source.read_bytes(sel))
+            return screen_candidate(deps, ctx, ref.name, cv_source.read_bytes(ref.id))
         skipped.append(f"{sel}: not screened, declined")
         return None
 
