@@ -110,6 +110,35 @@ def test_report_scores_follow_rubric_order_and_length():
     assert tuple(s.requirement_id for s in report.scores) == ("m1", "n1", "m2")
 
 
+def test_rank_score_all_met_is_100_all_unmet_is_0():
+    rubric = _rubric(MUST_A, NICE_A)
+    full = decide_verdict(rubric, [_score("m1", ScoreLevel.MET), _score("n1", ScoreLevel.MET)])
+    empty = decide_verdict(rubric, [])
+    assert full.rank_score == 100.0
+    assert empty.rank_score == 0.0
+
+
+def test_rank_score_weights_must_have_double_by_default():
+    rubric = _rubric(MUST_A, NICE_A)  # weights 2 + 1, total 3
+    must_only = decide_verdict(rubric, [_score("m1", ScoreLevel.MET), _score("n1", ScoreLevel.UNMET)])
+    nice_only = decide_verdict(rubric, [_score("m1", ScoreLevel.UNMET), _score("n1", ScoreLevel.MET)])
+    assert must_only.rank_score == 66.67  # a met must-have is worth more
+    assert nice_only.rank_score == 33.33
+
+
+def test_rank_score_partial_counts_half():
+    r = decide_verdict(_rubric(MUST_A), [_score("m1", ScoreLevel.PARTIAL)])
+    assert r.rank_score == 50.0
+
+
+def test_rank_score_respects_custom_weights():
+    rubric = _rubric(MUST_A, NICE_A)  # must_weight 3 + nice 1, total 4
+    r = decide_verdict(
+        rubric, [_score("m1", ScoreLevel.MET), _score("n1", ScoreLevel.UNMET)], must_weight=3.0
+    )
+    assert r.rank_score == 75.0
+
+
 def test_borderline_threshold_is_configurable():
     rubric = _rubric(MUST_A, NICE_A, NICE_B)
     scores = [

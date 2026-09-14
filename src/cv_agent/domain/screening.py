@@ -27,7 +27,8 @@ class ScreeningReport(_Frozen):
     scores: tuple[RequirementScore, ...] = ()
     verdict: Verdict = Verdict.REJECT
     borderline: bool = False
-    score: float = 0.0
+    score: float = 0.0           # nice-to-have strength (0..1), drives borderline
+    rank_score: float = 0.0      # weighted 0..100 over ALL requirements, drives ranking
     reasons: tuple[str, ...] = ()
 
     @property

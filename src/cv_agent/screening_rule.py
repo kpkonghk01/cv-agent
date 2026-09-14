@@ -28,8 +28,10 @@ def decide_verdict(
     *,
     strictness: Strictness = Strictness.LOOSE,
     borderline_threshold: float = 0.5,
+    must_weight: float = 2.0,
+    nice_weight: float = 1.0,
 ) -> ScreeningReport:
-    """Score → verdict. Missing scores default to ``Unmet`` (defensive)."""
+    """Score → verdict + a weighted 0..100 rank score. Missing scores default to ``Unmet``."""
     by_id = {s.requirement_id: s for s in scores}
 
     # Order scores by the rubric; fill gaps with an explicit Unmet.
@@ -54,14 +56,29 @@ def decide_verdict(
         nice_score < borderline_threshold or bool(partial_must)
     )
 
+    rank_score = _rank_score(rubric, level_of, must_weight, nice_weight)
     reasons = _reasons(verdict, failed_must, partial_must, nice_score, borderline)
     return ScreeningReport(
         scores=ordered,
         verdict=verdict,
         borderline=borderline,
         score=nice_score,
+        rank_score=rank_score,
         reasons=reasons,
     )
+
+
+def _rank_score(rubric: Rubric, level_of: dict, must_weight: float, nice_weight: float) -> float:
+    """Weighted attainment over ALL requirements, normalised to 0..100 (for ranking)."""
+
+    def weight(req) -> float:
+        return must_weight if req.is_must_have else nice_weight
+
+    total = sum(weight(r) for r in rubric.requirements)
+    if total == 0:
+        return 0.0
+    earned = sum(weight(r) * _WEIGHT[level_of[r.id]] for r in rubric.requirements)
+    return round(100.0 * earned / total, 2)
 
 
 def _reasons(verdict, failed_must, partial_must, nice_score, borderline) -> tuple[str, ...]:
