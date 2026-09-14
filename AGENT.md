@@ -80,7 +80,8 @@ LangGraph is used as a stateful workflow engine, with a small number of structur
 
 ## Deferred (seams left in place)
 
-Google Drive source/sink · Slack notifier · vision-LLM `--ocr-fallback` · LangGraph checkpointer ·
+Google Drive source/sink · Slack notifier · vision-LLM `--ocr-fallback` (image-only CVs; text-layer
+scavenge already covers the common image-name gap) · LangGraph checkpointer ·
 `M` JDs per run · **Phase 2**: ingest interview scorecards → post-interview evaluation
 (v1 already accepts `--prev-scorecard` as the input half of that seam).
 
@@ -115,3 +116,13 @@ Hard-won field notes — read before debugging an LLM run or blaming a model.
   fine; a smaller model is the lever if throughput matters.
 - **Marker force-OCR bypasses the boss直聘 watermark/poisoned-text layer** — validated on a real CV
   (clean bilingual markdown, two columns linearised).
+- **OCR engine comparison (measured on a real boss直聘 CV).** Marker beats the alternatives for
+  these CVs: *pdfplumber* (text layer) is complete — it even keeps an image-rendered name — but the
+  poisoned text layer buries everything in ~600 single-char watermark fragments + hex tokens;
+  *Tesseract* (the pdf skill's scanned path) rasterises like Marker but mangles Chinese
+  (专业技能→"suisse", 学历→"ZF i") and transcribes the visible watermark. Marker is clean, accurate,
+  and layout-aware; its only gap is dropping image-classified regions (a name baked into an image).
+- **Text-layer scavenge recovers Marker's gap cheaply.** `ocr/extract_text_layer` (pdfplumber,
+  denoised) + the CV filename are fed to the structuring LLM as *secondary* hints — the clean OCR
+  body wins on conflict. This is the lightweight alternative to a vision `--ocr-fallback`, which is
+  now only needed for genuinely image-only CVs.
