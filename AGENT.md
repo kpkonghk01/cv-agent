@@ -55,6 +55,14 @@ Each phase's per-candidate flow is linear, so it is direct node orchestration
   Phase 1's scoring without re-running the LLM.
 - `ProcessedRegistry` keyed by `(cv_hash, jd_hash)` (legacy verdict summary; superseded by the
   ScreeningCache in the two-phase flow).
+- `SourceIndex` maps `source_id` (Drive file id / filename) → `cv_hash`, so an already-seen file
+  is recognised without re-downloading it to recompute the hash.
+- `FailureCache` keyed by `(cv_hash, jd_hash)` — a remembered *processing* failure (OCR/structure/
+  screen). By default the next `screen` **skips** a cached failure (no reprocessing); `--retry`
+  re-attempts it and `--handoff` re-attempts it and, for any still failing, writes a
+  `failures__<jd>__<since>.json` manifest for the driving agent to process and `ingest-profile`.
+  Success clears the cached failure. Infra errors (e.g. download) are **not** cached — they are
+  transient and retried next run.
 - Interview Brief unit = `(cv_hash, jd_hash, interview_meta_hash)` → never overwrite across rounds.
 - Dedup by content hash; re-exported PDF = new CV (accepted v1 limitation).
 

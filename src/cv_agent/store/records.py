@@ -7,6 +7,17 @@ from pydantic import BaseModel, ConfigDict
 from cv_agent.domain.enums import CandidateStatus, Verdict
 
 
+class FailureRecord(BaseModel):
+    """A remembered per-(CV, JD) processing failure, so re-runs skip it by default
+    instead of re-paying OCR/LLM — until --retry or --handoff asks otherwise."""
+
+    model_config = ConfigDict(frozen=True)
+
+    step: str          # where it failed: ocr | structure | screen | process
+    reason: str
+    created_at: str | None = None
+
+
 class ProcessedRecord(BaseModel):
     """What we remember about screening one CV against one JD (see ADR 0003).
 

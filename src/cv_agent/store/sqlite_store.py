@@ -13,7 +13,7 @@ from types import TracebackType
 from cv_agent.domain.candidate import CandidateProfile
 from cv_agent.domain.rubric import Rubric
 from cv_agent.domain.screening import ScreeningReport
-from cv_agent.store.records import ProcessedRecord
+from cv_agent.store.records import FailureRecord, ProcessedRecord
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (cv_hash TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS screenings (
 CREATE TABLE IF NOT EXISTS source_index (
     source_id TEXT PRIMARY KEY,   -- Drive file id / filename
     cv_hash   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS failures (
+    cv_hash TEXT NOT NULL,
+    jd_hash TEXT NOT NULL,
+    json    TEXT NOT NULL,
+    PRIMARY KEY (cv_hash, jd_hash)
 );
 """
 
@@ -127,6 +133,27 @@ class SqliteStore:
         self._upsert(
             "INSERT OR REPLACE INTO source_index (source_id, cv_hash) VALUES (?, ?)",
             (source_id, cv_hash),
+        )
+
+    # --- FailureCache (remembered failures, keyed by (cv_hash, jd_hash)) ---
+
+    def get_failure(self, cv_hash: str, jd_hash: str) -> FailureRecord | None:
+        row = self._fetch(
+            "SELECT json FROM failures WHERE cv_hash = ? AND jd_hash = ?", (cv_hash, jd_hash)
+        )
+        return FailureRecord.model_validate_json(row) if row else None
+
+    def put_failure(self, cv_hash: str, jd_hash: str, record: FailureRecord) -> None:
+        self._upsert(
+            "INSERT OR REPLACE INTO failures (cv_hash, jd_hash, json) VALUES (?, ?, ?)",
+            (cv_hash, jd_hash, record.model_dump_json()),
+        )
+
+    def forget_failure(self, cv_hash: str, jd_hash: str | None = None) -> int:
+        if jd_hash is None:
+            return self._delete("DELETE FROM failures WHERE cv_hash = ?", (cv_hash,))
+        return self._delete(
+            "DELETE FROM failures WHERE cv_hash = ? AND jd_hash = ?", (cv_hash, jd_hash)
         )
 
     # --- Forget (maintenance: force re-analysis of a CV) ------------------

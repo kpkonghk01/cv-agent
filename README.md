@@ -145,6 +145,23 @@ CVs are loaded from cache (no download / OCR / LLM), so batch/incremental re-run
 `interview` selectors resolve by **CV filename** (exact; if not yet
 screened you're prompted to OCR it on demand) or **candidate name** (matches a screened profile).
 
+**Failures & agent handoff.** When OCR/structure/scoring throws for a CV, the failure is
+**remembered** per `(cv_hash, jd_hash)`, and by default the next `screen` **skips** it (no
+reprocessing — the summary lists it as `skipped`). Override per run:
+
+- `--retry` — re-attempt remembered failures this run (a success clears the memory).
+- `--handoff` — re-attempt them and, for any that still fail, write
+  `failures__<jd>__<since>.json` (cv_hash, source_id, step, reason). A driving agent processes each
+  failed CV itself and hands the resulting profile back:
+
+  ```bash
+  uv run cv-agent ingest-profile <cv_hash> path/to/profile.json   # stores it, clears the failure
+  uv run cv-agent screen --jd FILE ...                            # scores it from cache (no OCR)
+  ```
+
+  (Infra errors such as a failed download are treated as **transient** — not remembered, retried
+  next run.)
+
 ### Outputs
 
 Written to `data/reports/` (the `ReportSink`):

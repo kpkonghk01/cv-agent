@@ -9,6 +9,7 @@ Pure and testable: every adapter is injected. Real construction from AppConfig i
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -29,16 +30,20 @@ from cv_agent.hashing import cv_hash, jd_hash
 from cv_agent.naming import shortlist_filename, slugify
 from cv_agent.nodes import jd_to_rubric
 from cv_agent.settings import ResolvedSettings, resolve_settings
+from cv_agent.store import FailureRecord
 
 
 class ScreenSummary(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    total: int = 0
+    total: int = 0                       # scored this run (cached + fresh)
     shortlisted: int = 0
-    errors: int = 0
+    skipped: int = 0                     # previously-failed, skipped by default
+    failed: int = 0                      # failed this run (remembered in the failure cache)
+    errors: int = 0                      # transient errors (e.g. download) — not remembered
     error_summaries: tuple[str, ...] = ()
     shortlist_path: str | None = None
+    failures_path: str | None = None     # machine-readable manifest (only with --handoff)
 
 
 class InterviewSummary(BaseModel):
@@ -118,6 +123,8 @@ def run_screen(
     top_n: int | None = None,
     limit: int | None = None,
     concurrency: int = 1,
+    retry_failed: bool = False,
+    handoff: bool = False,
     progress: Callable[[str], None] = lambda _: None,
 ) -> ScreenSummary:
     progress("preparing rubric…")
@@ -125,7 +132,9 @@ def run_screen(
     deps = PipelineDeps(store=store, sink=sink, ocr=ocr, clients=clients)
 
     entries: list[ShortlistEntry] = []
-    errors: list[str] = []
+    errors: list[str] = []            # transient (e.g. download) — not remembered
+    failed: list[dict] = []           # processing failures remembered this run
+    skipped: list[str] = []           # previously-failed, skipped by default
     refs = cv_source.list(since)
     if limit is not None:
         refs = refs[:limit]  # cost/test cap on how many CVs to OCR + score
@@ -136,21 +145,22 @@ def run_screen(
 
     def _work(ref):
         try:
-            profile, report, cached = _screen_ref(deps, ctx, ref, cv_source)
-            outcome: tuple = ("ok", ref, profile, report, cached)
-        except Exception as err:  # per-candidate isolation
-            outcome = ("err", ref, err)
+            outcome: tuple = _process_ref(deps, ctx, ref, cv_source, retry_failed, handoff)
+        except Exception as err:  # transient (download etc.) — retried next run, not cached
+            outcome = ("error", ref, str(err))
         with plock:  # atomic, ordered progress even from worker threads
             counter["n"] += 1
             n = counter["n"]
-            if outcome[0] == "ok":
+            kind = outcome[0]
+            if kind == "scored":
+                report = outcome[3]
                 tag = "cached " if outcome[4] else ""
-                progress(
-                    f"[{n}/{total}] {ref.name} → {tag}{outcome[3].rank_score:g} "
-                    f"({outcome[3].verdict.value})"
-                )
-            else:
-                progress(f"[{n}/{total}] {ref.name} ✗ {outcome[2]}")
+                progress(f"[{n}/{total}] {ref.name} → {tag}{report.rank_score:g} "
+                         f"({report.verdict.value})")
+            elif kind == "skipped":
+                progress(f"[{n}/{total}] {ref.name} ⏭ skipped (cached failure: {outcome[2].step})")
+            else:  # failed | error
+                progress(f"[{n}/{total}] {ref.name} ✗ {outcome[2 if kind == 'error' else 4]}")
         return outcome
 
     if concurrency <= 1:
@@ -160,14 +170,23 @@ def run_screen(
             outcomes = list(pool.map(_work, refs))
 
     for outcome in outcomes:
-        if outcome[0] == "ok":
+        kind = outcome[0]
+        if kind == "scored":
             _, ref, profile, report, _cached = outcome
             entries.append(
                 ShortlistEntry(name=profile.name or ref.name, cv_id=ref.name, report=report)
             )
-        else:
-            _, ref, err = outcome
-            errors.append(f"{ref.name}: {err}")
+        elif kind == "skipped":
+            _, ref, failure = outcome
+            skipped.append(f"{ref.name}: previously failed at {failure.step} ({failure.reason})")
+        elif kind == "failed":
+            _, ref, digest, step, reason = outcome
+            errors.append(f"{ref.name}: {reason}")
+            failed.append({"cv_id": ref.name, "source_id": ref.id, "cv_hash": digest,
+                           "step": step, "reason": reason})
+        else:  # transient error
+            _, ref, reason = outcome
+            errors.append(f"{ref.name}: {reason} (transient)")
 
     entries.sort(key=lambda e: e.report.rank_score, reverse=True)
     top = tuple(entries[:top_n]) if top_n else tuple(entries)
@@ -178,30 +197,78 @@ def run_screen(
     path = sink.write(shortlist_filename(ctx.jd_slug, label), content)
     progress(f"shortlist → {path}")
 
+    failures_path = None
+    if handoff and failed:  # hand the failed steps off to the driving agent
+        failures_path = sink.write(
+            f"failures__{ctx.jd_slug}__{label}.json", _failures_manifest(ctx, failed)
+        )
+        progress(f"failures manifest → {failures_path}")
+
     summary = ScreenSummary(
         total=len(entries),
         shortlisted=len(top),
+        skipped=len(skipped),
+        failed=len(failed),
         errors=len(errors),
-        error_summaries=tuple(errors),
+        error_summaries=tuple(errors) + tuple(skipped),
         shortlist_path=path,
+        failures_path=failures_path,
     )
     notifier.notify(render_screen_summary(summary))
     return summary
 
 
-def _screen_ref(deps, ctx, ref, cv_source):
-    """Screen one source ref. If the file id is a known, fully-cached CV, load it without
-    downloading; otherwise download, screen, and remember file id → cv_hash. Returns
-    (profile, report, from_cache)."""
-    known = deps.store.get_cv_hash(ref.id)
-    if known is not None:
-        report = deps.store.get_screening(known, ctx.jd_hash)
-        profile = deps.store.get_profile(known)
-        if report is not None and profile is not None:
-            return profile, report, True
-    digest, profile, report = screen_candidate(deps, ctx, ref.name, cv_source.read_bytes(ref.id))
-    deps.store.put_cv_hash(ref.id, digest)
-    return profile, report, False
+def _process_ref(deps, ctx, ref, cv_source, retry_failed: bool, handoff: bool):
+    """Screen one source ref, honouring the failure cache. Returns one of:
+    ``("scored", ref, profile, report, from_cache)`` — usable score;
+    ``("skipped", ref, failure_record)`` — a remembered failure, skipped (default);
+    ``("failed", ref, cv_hash, step, reason)`` — failed this run (now remembered).
+
+    A known, fully-cached CV loads without downloading. A processing failure (OCR/LLM) is
+    remembered so the next run skips it — unless ``retry_failed`` or ``handoff`` is set. Only
+    the OCR/structure/screen step is caught here; infra errors (download) propagate to the
+    caller as transient, so they are retried rather than cached."""
+    digest = deps.store.get_cv_hash(ref.id)
+    downloaded = None
+    if digest is None:
+        downloaded = cv_source.read_bytes(ref.id)  # may raise (transient) → caller
+        digest = cv_hash(downloaded)
+        deps.store.put_cv_hash(ref.id, digest)
+
+    report = deps.store.get_screening(digest, ctx.jd_hash)
+    profile = deps.store.get_profile(digest)
+    if report is not None and profile is not None:
+        return "scored", ref, profile, report, True
+
+    if not (retry_failed or handoff):
+        failure = deps.store.get_failure(digest, ctx.jd_hash)
+        if failure is not None:
+            return "skipped", ref, failure
+
+    if downloaded is None:
+        downloaded = cv_source.read_bytes(ref.id)  # may raise (transient) → caller
+    try:
+        _, profile, report = screen_candidate(deps, ctx, ref.name, downloaded)
+    except Exception as err:  # processing failure → remember it, so re-runs skip by default
+        deps.store.put_failure(
+            digest, ctx.jd_hash,
+            FailureRecord(step="process", reason=str(err), created_at=ctx.created_at),
+        )
+        return "failed", ref, digest, "process", str(err)
+    deps.store.forget_failure(digest, ctx.jd_hash)  # success clears any stale failure
+    return "scored", ref, profile, report, False
+
+
+def _failures_manifest(ctx, failed: list[dict]) -> str:
+    """A machine-readable handoff for the driving agent: which CVs failed, where, and the
+    ids it needs to fetch each one and ingest a profile (see ``ingest-profile``)."""
+    payload = {
+        "jd_hash": ctx.jd_hash,
+        "jd_slug": ctx.jd_slug,
+        "created_at": ctx.created_at,
+        "failures": failed,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 # --- Phase 2: interview accepted candidates ------------------------------
@@ -276,11 +343,15 @@ def _resolve(deps, ctx, sel, cv_source, by_filename, confirm, skipped):
 def render_screen_summary(s: ScreenSummary) -> str:
     lines = [
         "=== screen summary ===",
-        f"screened={s.total} shortlisted={s.shortlisted} errors={s.errors}",
+        f"screened={s.total} shortlisted={s.shortlisted} "
+        f"skipped={s.skipped} failed={s.failed} errors={s.errors}",
         f"shortlist: {s.shortlist_path}",
     ]
+    if s.failures_path:
+        lines.append(f"failures manifest: {s.failures_path}")
     if s.error_summaries:
-        lines += ["", "Errors (not scored; will retry next run):",
+        lines += ["", "Not scored (failed = remembered; transient = retried; "
+                  "skipped = --retry to re-run):",
                   *(f"  - {e}" for e in s.error_summaries)]
     return "\n".join(lines)
 

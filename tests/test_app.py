@@ -195,6 +195,69 @@ def test_screen_isolates_per_candidate_failures(store, tmp_path):
     assert any("bad.pdf" in e for e in summary.error_summaries)
 
 
+class PickyOcr:
+    """OCR that raises for chosen CV bytes — to trigger a *processing* failure (not a
+    transient download error), so the failure cache is exercised."""
+
+    def __init__(self, fail_on=()):
+        self.calls = 0
+        self._fail_on = set(fail_on)
+
+    def to_markdown(self, pdf_bytes):
+        self.calls += 1
+        if pdf_bytes in self._fail_on:
+            raise RuntimeError("OCR blew up")
+        return OcrResult(markdown="# CV")
+
+
+def test_screen_remembers_failure_and_skips_next_run(store, tmp_path):
+    cv = FakeCv({"a.pdf": b"AAA", "bad.pdf": b"BAD"})
+    common = _common(store, tmp_path, cv, ScriptedClient([PASS]))
+    common["ocr"] = ocr = PickyOcr(fail_on={b"BAD"})
+    s1 = run_screen(**common)
+    assert s1.total == 1 and s1.failed == 1 and s1.skipped == 0
+    assert store.get_failure(cv_hash(b"BAD"), JDH) is not None  # remembered
+    seen = ocr.calls
+
+    # second run: a.pdf is cached (scored), bad.pdf is skipped — no reprocessing
+    common2 = _common(store, tmp_path, cv, ScriptedClient([PASS]))
+    common2["ocr"] = ocr
+    s2 = run_screen(**common2)
+    assert s2.total == 1 and s2.skipped == 1 and s2.failed == 0
+    assert ocr.calls == seen  # nothing re-OCR'd
+    assert any("previously failed" in e for e in s2.error_summaries)
+
+
+def test_retry_reprocesses_remembered_failure_and_clears_it(store, tmp_path):
+    cv = FakeCv({"bad.pdf": b"BAD"})
+    common = _common(store, tmp_path, cv, ScriptedClient([PASS]))
+    common["ocr"] = PickyOcr(fail_on={b"BAD"})
+    run_screen(**common)
+    assert store.get_failure(cv_hash(b"BAD"), JDH) is not None
+
+    common2 = _common(store, tmp_path, cv, ScriptedClient([PASS]))
+    common2["ocr"] = PickyOcr()  # now succeeds
+    s = run_screen(**common2, retry_failed=True)
+    assert s.total == 1 and s.failed == 0 and s.skipped == 0
+    assert store.get_failure(cv_hash(b"BAD"), JDH) is None  # success clears it
+
+
+def test_handoff_writes_failures_manifest(store, tmp_path):
+    import json
+
+    cv = FakeCv({"bad.pdf": b"BAD"})
+    common = _common(store, tmp_path, cv, ScriptedClient([PASS]))
+    common["ocr"] = PickyOcr(fail_on={b"BAD"})
+    s = run_screen(**common, handoff=True)
+    assert s.failed == 1 and s.failures_path is not None
+    data = json.loads(Path(s.failures_path).read_text(encoding="utf-8"))
+    assert data["jd_hash"] == JDH
+    entry = data["failures"][0]
+    assert entry["cv_hash"] == cv_hash(b"BAD")
+    assert entry["source_id"] == "bad.pdf"
+    assert entry["step"] == "process"
+
+
 def test_screen_applies_meta_role_override(store, tmp_path):
     cv = FakeCv({"a.pdf": b"AAA"})
     common = _common(store, tmp_path, cv, ScriptedClient([PASS]))

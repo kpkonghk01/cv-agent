@@ -47,6 +47,20 @@ def _parser() -> argparse.ArgumentParser:
     screen.add_argument("--top", type=int, help="Keep only the top N in the shortlist.")
     screen.add_argument("--limit", type=int, help="Cap how many CVs to OCR+score (cost/test).")
     screen.add_argument("--concurrency", type=int, help="Parallel CVs (default MAX_CONCURRENCY).")
+    fail = screen.add_mutually_exclusive_group()
+    fail.add_argument("--retry", action="store_true",
+                      help="Retry CVs with a remembered failure (default: skip them).")
+    fail.add_argument("--handoff", action="store_true",
+                      help="Retry failures and, for any that still fail, write a manifest for "
+                           "the driving agent to process and ingest-profile.")
+
+    ingest = sub.add_parser(
+        "ingest-profile",
+        help="Agent handoff: store a CandidateProfile a driving agent produced for a failed CV, "
+             "clearing its remembered failure so the next screen run scores it.",
+    )
+    ingest.add_argument("cv_hash", help="cv_hash from the failures manifest.")
+    ingest.add_argument("profile", help="Path to a CandidateProfile JSON file.")
 
     interview = sub.add_parser("interview", help="Phase 2: draft briefs for accepted candidates.")
     _add_common(interview)
@@ -139,6 +153,21 @@ def main(argv: list[str] | None = None) -> int:
             print(ref.id)
         return 0
 
+    if args.command == "ingest-profile":
+        from cv_agent.domain.candidate import CandidateProfile
+
+        store = SqliteStore(config.store_path)
+        try:
+            with open(args.profile, encoding="utf-8") as fh:
+                profile = CandidateProfile.model_validate_json(fh.read())
+            store.put_profile(args.cv_hash, profile)
+            cleared = store.forget_failure(args.cv_hash)
+            print(f"Ingested profile for {args.cv_hash[:8]}; cleared {cleared} failure row(s). "
+                  "Re-run screen to score it.")
+        finally:
+            store.close()
+        return 0
+
     jd_id = _resolve_jd(args.jd, config.default_jd, jd_source)
     from cv_agent.ocr import MarkerOcrEngine
 
@@ -161,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = run_screen(
                 **common, since=args.since, top_n=args.top, limit=args.limit,
                 concurrency=args.concurrency or config.max_concurrency,
+                retry_failed=args.retry, handoff=args.handoff,
             )
             print(render_screen_summary(summary))
         else:  # interview

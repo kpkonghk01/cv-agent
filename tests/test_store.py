@@ -173,6 +173,20 @@ def test_source_index_round_trip_and_forget(store):
     assert store.get_cv_hash("file123") is None
 
 
+def test_failure_round_trip_and_forget_scoped(store):
+    from cv_agent.store import FailureRecord
+
+    assert store.get_failure("cv1", "jd1") is None
+    store.put_failure("cv1", "jd1", FailureRecord(step="process", reason="boom"))
+    store.put_failure("cv1", "jd2", FailureRecord(step="ocr", reason="nope"))
+    got = store.get_failure("cv1", "jd1")
+    assert got.step == "process" and got.reason == "boom"
+    assert store.forget_failure("cv1", "jd1") == 1     # scoped to one JD
+    assert store.get_failure("cv1", "jd1") is None
+    assert store.get_failure("cv1", "jd2") is not None
+    assert store.forget_failure("cv1") == 1            # all JDs for the CV
+
+
 def test_data_persists_across_instances(tmp_path):
     db = str(tmp_path / "s.sqlite")
     with SqliteStore(db) as s:

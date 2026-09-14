@@ -11,7 +11,7 @@ from typing import Protocol, runtime_checkable
 from cv_agent.domain.candidate import CandidateProfile
 from cv_agent.domain.rubric import Rubric
 from cv_agent.domain.screening import ScreeningReport
-from cv_agent.store.records import ProcessedRecord
+from cv_agent.store.records import FailureRecord, ProcessedRecord
 
 
 @runtime_checkable
@@ -66,5 +66,17 @@ class SourceIndex(Protocol):
 
 
 @runtime_checkable
-class Store(ProfileCache, RubricCache, ProcessedRegistry, ScreeningCache, SourceIndex, Protocol):
+class FailureCache(Protocol):
+    """Remembered per-(cv_hash, jd_hash) failures, so re-runs skip them by default."""
+
+    def get_failure(self, cv_hash: str, jd_hash: str) -> FailureRecord | None: ...
+
+    def put_failure(self, cv_hash: str, jd_hash: str, record: FailureRecord) -> None: ...
+
+
+@runtime_checkable
+class Store(
+    ProfileCache, RubricCache, ProcessedRegistry, ScreeningCache, SourceIndex,
+    FailureCache, Protocol,
+):
     """A backend that provides every cache (the SQLite store does)."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cv_agent.store.ports import (
+    FailureCache,
     ProcessedRegistry,
     ProfileCache,
     RubricCache,
@@ -10,7 +11,7 @@ from cv_agent.store.ports import (
     SourceIndex,
     Store,
 )
-from cv_agent.store.records import ProcessedRecord
+from cv_agent.store.records import FailureRecord, ProcessedRecord
 from cv_agent.store.sqlite_store import SqliteStore
 
 __all__ = [
@@ -19,7 +20,9 @@ __all__ = [
     "RubricCache",
     "ScreeningCache",
     "SourceIndex",
+    "FailureCache",
     "Store",
     "ProcessedRecord",
+    "FailureRecord",
     "SqliteStore",
 ]
