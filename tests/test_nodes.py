@@ -46,6 +46,15 @@ def test_structure_cv_passes_filename_as_a_hint():
     assert "王小明 3年.pdf" in _user_text(client.calls)
 
 
+def test_structure_cv_uses_text_layer_scavenge():
+    # The PDF text layer can recover a name the image OCR dropped.
+    client = FakeClient('{"name": "王小明"}')
+    structure_cv(client, "# body without a name", text_layer="王小明\n求职意向：後端工程師")
+    text = _user_text(client.calls)
+    assert "王小明" in text
+    assert "text layer" in text.lower()
+
+
 # --- jd_to_rubric ---------------------------------------------------------
 
 

@@ -17,6 +17,8 @@ dependencies = [
     "pyyaml>=6.0",
     # .env config
     "python-dotenv>=1.0",
+    # Text-layer scavenge: recover fields Marker's image OCR drops (e.g. an image-name)
+    "pdfplumber>=0.11.9",
 ]
 
 [project.scripts]
@@ -51,4 +53,5 @@ omit = [
     "src/cv_agent/cli.py",
     "src/cv_agent/llm/client.py",
     "src/cv_agent/ocr/marker_engine.py",
+    "src/cv_agent/ocr/text_layer.py",  # extract_text_layer is real IO; denoise tested directly
 ]

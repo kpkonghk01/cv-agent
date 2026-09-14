@@ -12,18 +12,21 @@ def structure_cv(
     markdown: str,
     *,
     filename: str | None = None,
+    text_layer: str | None = None,
     ocr_confidence: float | None = None,
     max_retries: int = 2,
 ) -> CandidateProfile:
     """Extract a profile from OCR markdown; the node (not the LLM) attaches provenance.
 
-    ``filename`` is passed to the model as a hint — platform exports embed the name/role
-    in the filename, which fills fields the OCR missed (e.g. a name baked into an image).
+    ``filename`` and ``text_layer`` are secondary hints for fields the image OCR missed
+    (e.g. a name baked into an image): the filename usually embeds the name/role, and the
+    raw PDF text layer often still holds image-region text. The clean OCR body wins on
+    conflict.
     """
     profile = structured_call(
         client,
         CandidateProfile,
-        structure_messages(markdown, filename=filename),
+        structure_messages(markdown, filename=filename, text_layer=text_layer),
         max_retries=max_retries,
     )
     return profile.model_copy(

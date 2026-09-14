@@ -23,6 +23,7 @@ from cv_agent.graph.reports import render_reject_report, render_scorecard
 from cv_agent.hashing import cv_hash, short
 from cv_agent.naming import candidate_id, interview_brief_filename, reject_report_filename
 from cv_agent.nodes import interview_brief, screen, structure_cv
+from cv_agent.ocr import extract_text_layer
 from cv_agent.store.records import ProcessedRecord
 
 
@@ -31,6 +32,7 @@ class CandidateState(TypedDict, total=False):
     cv_bytes: bytes
     cv_hash: str
     markdown: str
+    text_layer: str
     ocr_confidence: float | None
     profile: CandidateProfile
     report: ScreeningReport
@@ -56,7 +58,15 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
         if cached is not None:
             return {"profile": cached}
         result = deps.ocr.to_markdown(state["cv_bytes"])
-        return {"markdown": result.markdown, "ocr_confidence": result.confidence}
+        try:
+            text_layer = extract_text_layer(state["cv_bytes"])
+        except Exception:
+            text_layer = ""  # best-effort scavenge; a bad/non-PDF text layer must not block
+        return {
+            "markdown": result.markdown,
+            "text_layer": text_layer,
+            "ocr_confidence": result.confidence,
+        }
 
     def route_after_ocr(state: CandidateState) -> str:
         return "have_profile" if state.get("profile") is not None else "structure"
@@ -66,6 +76,7 @@ def build_candidate_graph(deps: PipelineDeps, ctx: RunContext) -> Any:
             deps.clients[NodeName.STRUCTURE_CV],
             state["markdown"],
             filename=state.get("cv_id"),
+            text_layer=state.get("text_layer"),
             ocr_confidence=state.get("ocr_confidence"),
         )
         deps.store.put_profile(state["cv_hash"], profile)

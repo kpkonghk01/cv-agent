@@ -17,17 +17,26 @@ _BILINGUAL = (
 )
 
 
-def structure_messages(markdown: str, *, filename: str | None = None) -> list[Message]:
+def structure_messages(
+    markdown: str, *, filename: str | None = None, text_layer: str | None = None
+) -> list[Message]:
     system = (
         "You extract a structured CandidateProfile as JSON from a CV in Markdown. "
         f"{_BILINGUAL} Output ONLY JSON matching the schema; leave source_markdown empty."
     )
     user = f"CV markdown:\n\n{markdown}"
+    if text_layer:
+        user += (
+            "\n\n---\nRaw PDF text layer (may be noisy, watermarked, or out of reading "
+            "order, but can contain fields the image OCR missed — e.g. a name rendered as "
+            "an image). Use it ONLY to fill gaps; prefer the CV markdown above when they "
+            f"disagree:\n{text_layer}"
+        )
     if filename:
         user += (
             "\n\n---\nSource filename (platform exports often embed the candidate's name "
-            "or role here; use it to fill fields the OCR text is missing — e.g. name — but "
-            f"prefer the CV body when they disagree):\n{filename}"
+            "or role here; use it to fill fields still missing — e.g. name — but prefer the "
+            f"CV body when they disagree):\n{filename}"
         )
     return [
         {"role": "system", "content": system},
